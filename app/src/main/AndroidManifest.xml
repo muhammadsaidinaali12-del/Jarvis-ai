@@ -2,7 +2,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permissions -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -10,7 +9,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Speech recognition / TTS / browser queries -->
     <queries>
 
         <intent>
@@ -18,11 +16,11 @@
         </intent>
 
         <intent>
-            <action android.intent.action.TTS_SERVICE" />
+            <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
 
         <intent>
-            <action android.intent.action.VIEW" />
+            <action android:name="android.intent.action.VIEW" />
         </intent>
 
     </queries>
@@ -37,14 +35,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication">
 
-        <!-- JARVIS background voice service -->
         <service
             android:name="com.example.service.JarvisVoiceService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
-        <!-- Main application activity -->
         <activity
             android:name="com.example.MainActivity"
             android:enabled="true"
@@ -54,11 +50,8 @@
             android:windowSoftInputMode="adjustResize">
 
             <intent-filter>
-
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
-
             </intent-filter>
 
         </activity>
