@@ -9,6 +9,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <queries>
+
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
@@ -18,8 +19,9 @@
         </intent>
 
         <intent>
-            <action android.intent.action.VIEW" />
+            <action android:name="android.intent.action.VIEW" />
         </intent>
+
     </queries>
 
     <application
