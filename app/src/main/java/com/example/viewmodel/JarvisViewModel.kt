@@ -202,11 +202,7 @@ _status.value = AssistantStatus.WAKE_WORD_LISTENING
         }
     }
 
-    private fun startLocalWakeWordDetector() {
-        wakeWordDetector.start { event ->
-            handleWakeWordEvent(event)
-        }
-    }
+    
 
     private fun handleWakeWordEvent(event: WakeWordEvent) {
         when (event) {
