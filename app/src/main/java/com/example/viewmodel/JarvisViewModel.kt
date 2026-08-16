@@ -67,7 +67,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
 
     private val speechManager = SpeechManager(application)
     private val ttsManager = TtsManager(application)
-    private val wakeWordDetector = WakeWordDetector(application)
+    
     private val jarvisBrain = JarvisBrain(application)
 
     private val _status = MutableStateFlow(AssistantStatus.WAKE_WORD_LISTENING)
