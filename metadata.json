@@ -1,0 +1,8 @@
+{
+  "name": "Remix JARVIS V1",
+  "description": "Asisten suara futuristik berbahasa Indonesia dengan sistem Wake Word \u0027JARVIS\u0027, pendeteksian perintah suara berkelanjutan, dan respons Text-to-Speech.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
