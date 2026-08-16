@@ -214,13 +214,13 @@ _status.value = AssistantStatus.WAKE_WORD_LISTENING
                     // One-sentence: "JARVIS, jam berapa sekarang?" -> process directly!
                     _userSpokenText.value = event.inlineCommand
                     _status.value = AssistantStatus.PROCESSING
-                    wakeWordDetector.muteForTts()
+                    
                     processUserInput(event.inlineCommand)
                 } else {
                     // Standalone wake word: "JARVIS" -> acknowledge with "Ya, Tuan." then active listening
                     _status.value = AssistantStatus.ACTIVE_LISTENING
                     _userSpokenText.value = "JARVIS terdeteksi"
-                    wakeWordDetector.muteForTts()
+                    
 
                     ttsManager.speak("Ya, Tuan.") {
                         startActiveCommandListening()
@@ -265,7 +265,7 @@ _status.value = AssistantStatus.WAKE_WORD_LISTENING
             delay(500) // Brief safety pause after TTS audio drains
             _status.value = AssistantStatus.WAKE_WORD_LISTENING
             _passiveAudioLevel.value = 0f
-            wakeWordDetector.unmuteAfterTts()
+            
         }
     }
 
@@ -288,7 +288,7 @@ _status.value = AssistantStatus.WAKE_WORD_LISTENING
             }
             else -> {
                 // In WAKE_WORD_LISTENING, ERROR, or IDLE -> directly trigger ACTIVE_LISTENING
-                wakeWordDetector.muteForTts()
+                
                 _errorMessage.value = null
                 startActiveCommandListening()
             }
