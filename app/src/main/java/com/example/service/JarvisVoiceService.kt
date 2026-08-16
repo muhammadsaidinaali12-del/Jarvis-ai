@@ -46,6 +46,12 @@ class JarvisVoiceService : Service() {
         const val ACTION_RESUME =
             "com.example.jarvis.ACTION_RESUME"
 
+        const val ACTION_MUTE_TTS =
+            "com.example.jarvis.ACTION_MUTE_TTS"
+
+        const val ACTION_UNMUTE_TTS =
+            "com.example.jarvis.ACTION_UNMUTE_TTS"
+
         private val _serviceStatus =
             MutableStateFlow(ServiceState.STOPPED)
 
@@ -60,13 +66,12 @@ class JarvisVoiceService : Service() {
 
         fun startService(context: Context) {
 
-            val intent =
-                Intent(
-                    context,
-                    JarvisVoiceService::class.java
-                ).apply {
-                    action = ACTION_START
-                }
+            val intent = Intent(
+                context,
+                JarvisVoiceService::class.java
+            ).apply {
+                action = ACTION_START
+            }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 ContextCompat.startForegroundService(
@@ -80,39 +85,60 @@ class JarvisVoiceService : Service() {
 
         fun pauseService(context: Context) {
 
-            val intent =
-                Intent(
-                    context,
-                    JarvisVoiceService::class.java
-                ).apply {
-                    action = ACTION_PAUSE
-                }
+            val intent = Intent(
+                context,
+                JarvisVoiceService::class.java
+            ).apply {
+                action = ACTION_PAUSE
+            }
 
             context.startService(intent)
         }
 
         fun resumeService(context: Context) {
 
-            val intent =
-                Intent(
-                    context,
-                    JarvisVoiceService::class.java
-                ).apply {
-                    action = ACTION_RESUME
-                }
+            val intent = Intent(
+                context,
+                JarvisVoiceService::class.java
+            ).apply {
+                action = ACTION_RESUME
+            }
 
             context.startService(intent)
         }
 
         fun stopService(context: Context) {
 
-            val intent =
-                Intent(
-                    context,
-                    JarvisVoiceService::class.java
-                ).apply {
-                    action = ACTION_STOP
-                }
+            val intent = Intent(
+                context,
+                JarvisVoiceService::class.java
+            ).apply {
+                action = ACTION_STOP
+            }
+
+            context.startService(intent)
+        }
+
+        fun muteDetectorForTts(context: Context) {
+
+            val intent = Intent(
+                context,
+                JarvisVoiceService::class.java
+            ).apply {
+                action = ACTION_MUTE_TTS
+            }
+
+            context.startService(intent)
+        }
+
+        fun unmuteDetectorAfterTts(context: Context) {
+
+            val intent = Intent(
+                context,
+                JarvisVoiceService::class.java
+            ).apply {
+                action = ACTION_UNMUTE_TTS
+            }
 
             context.startService(intent)
         }
@@ -125,18 +151,16 @@ class JarvisVoiceService : Service() {
     }
 
     inner class LocalBinder : Binder() {
+
         fun getService(): JarvisVoiceService =
             this@JarvisVoiceService
     }
 
-    private val binder =
-        LocalBinder()
+    private val binder = LocalBinder()
 
-    private var wakeWordDetector:
-            WakeWordDetector? = null
+    private var wakeWordDetector: WakeWordDetector? = null
 
-    private var detectorRunning =
-        false
+    private var detectorRunning = false
 
     override fun onCreate() {
 
@@ -217,6 +241,16 @@ class JarvisVoiceService : Service() {
                     ServiceState.RUNNING
             }
 
+            ACTION_MUTE_TTS -> {
+
+                muteForTts()
+            }
+
+            ACTION_UNMUTE_TTS -> {
+
+                unmuteAfterTts()
+            }
+
             ACTION_STOP -> {
 
                 stopWakeWordEngine()
@@ -224,9 +258,14 @@ class JarvisVoiceService : Service() {
                 _serviceStatus.value =
                     ServiceState.STOPPED
 
-                stopForeground(
-                    STOP_FOREGROUND_REMOVE
-                )
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(
+                        STOP_FOREGROUND_REMOVE
+                    )
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
 
                 stopSelf()
             }
@@ -257,10 +296,7 @@ class JarvisVoiceService : Service() {
 
         try {
 
-            if (
-                Build.VERSION.SDK_INT >=
-                Build.VERSION_CODES.Q
-            ) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
 
                 startForeground(
                     NOTIFICATION_ID,
@@ -338,7 +374,7 @@ class JarvisVoiceService : Service() {
                 0,
                 openAppIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or
-                PendingIntent.FLAG_IMMUTABLE
+                        PendingIntent.FLAG_IMMUTABLE
             )
 
         val pauseIntent =
@@ -355,7 +391,7 @@ class JarvisVoiceService : Service() {
                 1,
                 pauseIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or
-                PendingIntent.FLAG_IMMUTABLE
+                        PendingIntent.FLAG_IMMUTABLE
             )
 
         val resumeIntent =
@@ -372,7 +408,7 @@ class JarvisVoiceService : Service() {
                 2,
                 resumeIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or
-                PendingIntent.FLAG_IMMUTABLE
+                        PendingIntent.FLAG_IMMUTABLE
             )
 
         val stopIntent =
@@ -389,7 +425,7 @@ class JarvisVoiceService : Service() {
                 3,
                 stopIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or
-                PendingIntent.FLAG_IMMUTABLE
+                        PendingIntent.FLAG_IMMUTABLE
             )
 
         val builder =
@@ -441,10 +477,7 @@ class JarvisVoiceService : Service() {
 
     private fun createNotificationChannel() {
 
-        if (
-            Build.VERSION.SDK_INT >=
-            Build.VERSION_CODES.O
-        ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
 
             val channel =
                 NotificationChannel(
