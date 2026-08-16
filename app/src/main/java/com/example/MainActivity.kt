@@ -17,14 +17,14 @@ import com.example.viewmodel.JarvisViewModel
 
 class MainActivity : ComponentActivity() {
 
-    private val jarvisViewModel: JarvisViewModel by viewModels()
+    private val viewModel: JarvisViewModel by viewModels()
 
-    private val microphonePermissionLauncher =
+    private val permissionLauncher =
         registerForActivityResult(
             ActivityResultContracts.RequestPermission()
         ) { granted ->
             if (granted) {
-                jarvisViewModel.startBackgroundVoiceServiceIfPermitted()
+                viewModel.startBackgroundVoiceServiceIfPermitted()
             }
         }
 
@@ -36,7 +36,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             MyApplicationTheme {
                 JarvisMainScreen(
-                    viewModel = jarvisViewModel,
+                    viewModel = viewModel,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -48,7 +48,7 @@ class MainActivity : ComponentActivity() {
                 Manifest.permission.RECORD_AUDIO
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            microphonePermissionLauncher.launch(
+            permissionLauncher.launch(
                 Manifest.permission.RECORD_AUDIO
             )
         }
