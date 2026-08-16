@@ -195,8 +195,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         if (ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             try {
                 JarvisVoiceService.startService(app)
-                startLocalWakeWordDetector()
-                _status.value = AssistantStatus.WAKE_WORD_LISTENING
+_status.value = AssistantStatus.WAKE_WORD_LISTENING
             } catch (e: Exception) {
                 _errorMessage.value = "Gagal memulai service suara: ${e.localizedMessage}"
             }
