@@ -23,11 +23,14 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Gradle
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug
+      - name: Install Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build APK
+        run: gradle assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
