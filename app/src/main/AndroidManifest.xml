@@ -35,13 +35,13 @@
         android:theme="@style/Theme.MyApplication">
 
         <service
-            android:name="com.example.service.JarvisVoiceService"
+            android:name=".service.JarvisVoiceService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="microphone" />
 
         <activity
-            android:name="com.aistudio.jarvisv1.bcrftr.MainActivity"
+            android:name=".MainActivity"
             android:enabled="true"
             android:exported="true"
             android:label="@string/app_name"
