@@ -29,16 +29,6 @@ android {
             "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // Pastikan source Kotlin/Java ikut dikompilasi.
-    sourceSets {
-        getByName("main") {
-            java.srcDirs(
-                "src/main/java",
-                "src/main/kotlin"
-            )
-        }
-    }
-
     signingConfigs {
         create("release") {
             val keystorePath =
@@ -52,8 +42,7 @@ android {
         }
 
         create("debugConfig") {
-            storeFile =
-                file("${rootDir}/debug.keystore")
+            storeFile = file("${rootDir}/debug.keystore")
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
@@ -134,6 +123,7 @@ dependencies {
 
     implementation(libs.converter.moshi)
     implementation(libs.firebase.ai)
+
     implementation(libs.firebase.appcheck.recaptcha)
 
     implementation(libs.kotlinx.coroutines.android)
@@ -182,6 +172,6 @@ dependencies {
         libs.androidx.compose.ui.tooling
     )
 
-    ksp(libs.androidx.room.compiler)
-    ksp(libs.moshi.kotlin.codegen)
+    "ksp"(libs.androidx.room.compiler)
+    "ksp"(libs.moshi.kotlin.codegen)
 }
