@@ -1,4 +1,4 @@
-package com.aistudio.jarvisv1.bcrftr
+package com.example
 
 import android.Manifest
 import android.content.pm.PackageManager
