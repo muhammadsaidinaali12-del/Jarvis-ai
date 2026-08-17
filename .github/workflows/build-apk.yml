@@ -39,8 +39,8 @@ jobs:
             -keypass android \
             -dname "CN=Android Debug,O=Android,C=US"
 
-      - name: Build APK
-        run: gradle assembleDebug
+      - name: Check Kotlin compilation
+  rur: gradle :app:compileDebugKotlin --info
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
