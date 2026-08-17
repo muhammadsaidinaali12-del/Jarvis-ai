@@ -1,7 +1,8 @@
 [versions]
+
 agp = "9.1.1"
 kotlin = "2.2.10"
-ksp = "2.2.10-2.0.2"
+ksp = "2.3.6"
 
 coreKtx = "1.18.0"
 junit = "4.13.2"
@@ -188,8 +189,6 @@ googleid = { group = "com.google.android.libraries.identity.googleid", name = "g
 [plugins]
 
 android-application = { id = "com.android.application", version.ref = "agp" }
-
-kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 
