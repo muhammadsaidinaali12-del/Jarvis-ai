@@ -40,8 +40,7 @@ jobs:
             -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Check Kotlin compilation
-  rur: gradle :app:compileDebugKotlin --info
-
+  run: gradle :app:compileDebugKotlin --info
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
