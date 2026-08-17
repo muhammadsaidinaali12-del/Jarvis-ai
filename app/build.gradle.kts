@@ -15,7 +15,6 @@ android {
         applicationId = "com.aistudio.jarvisv1.bcrftr"
         minSdk = 24
         targetSdk = 36
-
         versionCode = 1
         versionName = "1.0"
 
@@ -67,8 +66,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
-    implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
 
     implementation(libs.converter.moshi)
 
@@ -88,7 +87,6 @@ dependencies {
     testImplementation(libs.androidx.junit)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
-
     testImplementation(libs.robolectric)
     testImplementation(libs.roborazzi)
     testImplementation(libs.roborazzi.compose)
