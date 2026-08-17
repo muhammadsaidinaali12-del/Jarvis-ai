@@ -48,7 +48,6 @@ googleServices {
 }
 
 dependencies {
-
     implementation(platform(libs.androidx.compose.bom))
     implementation(platform(libs.firebase.bom))
 
@@ -84,7 +83,6 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.retrofit)
 
-
     testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.androidx.core)
     testImplementation(libs.androidx.junit)
@@ -96,18 +94,14 @@ dependencies {
     testImplementation(libs.roborazzi.compose)
     testImplementation(libs.roborazzi.junit.rule)
 
-
     androidTestImplementation(platform(libs.androidx.compose.bom))
-
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.runner)
 
-
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
-
 
     ksp(libs.androidx.room.compiler)
     ksp(libs.moshi.kotlin.codegen)
