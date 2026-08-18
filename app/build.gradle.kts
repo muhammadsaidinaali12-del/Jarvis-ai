@@ -82,6 +82,12 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.retrofit)
 
+    // =========================================================
+    // OPENWAKEWORD
+    // On-device wake-word detection menggunakan ONNX Runtime
+    // =========================================================
+    implementation("xyz.rementia:openwakeword:0.1.3")
+
     testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.androidx.core)
     testImplementation(libs.androidx.junit)
