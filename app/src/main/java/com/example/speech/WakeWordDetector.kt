@@ -43,7 +43,7 @@ sealed interface WakeWordEvent {
 }
 
 /**
- * JARVIS passive wake-word detector.
+ * Passive JARVIS wake-word detector.
  *
  * Behaviour:
  *
@@ -53,12 +53,16 @@ sealed interface WakeWordEvent {
  * "JARVIS, buka YouTube"
  *      -> Detected("buka YouTube")
  *
- * "Besok saya sekolah"
+ * "Besok saya ada sekolah"
  *      -> ignored
  *
- * Important:
- * SpeechRecognizer is used only as the recognition backend.
- * It is NOT allowed to overlap with SpeechManager.
+ * Catatan:
+ * Android tidak memberikan akses aplikasi pihak ketiga
+ * ke private system hotword engine seperti "Hey Google".
+ *
+ * Karena itu class ini menggunakan SpeechRecognizer
+ * sebagai backend passive listening dan melakukan
+ * restart session secara otomatis.
  */
 class WakeWordDetector(
     private val context: Context,
@@ -73,46 +77,52 @@ class WakeWordDetector(
 
         const val DEFAULT_SENSITIVITY = 0.75f
 
-        private const val RESTART_DELAY_NORMAL = 350L
+        private const val RESTART_DELAY_NORMAL = 250L
         private const val RESTART_DELAY_BUSY = 1200L
         private const val RESTART_DELAY_ERROR = 900L
 
+        /**
+         * Variasi yang masih dianggap sebagai JARVIS.
+         */
         private val WAKE_WORD_REGEX = Regex(
-            pattern = """
-                \b(
-                    jarvis|
-                    jar\s*vis|
-                    djarvis|
-                    carvis|
-                    jarves|
-                    yarvis|
-                    jarviz|
-                    jar\s+visual
-                )\b
-            """.trimIndent(),
-            option = RegexOption.IGNORE_CASE
+            "\\b(" +
+                    "jarvis|" +
+                    "jar\\s*vis|" +
+                    "djarvis|" +
+                    "carvis|" +
+                    "jarves|" +
+                    "yarvis|" +
+                    "jarviz|" +
+                    "jar\\s+visual" +
+                    ")\\b",
+            RegexOption.IGNORE_CASE
         )
 
+        /**
+         * Contoh:
+         *
+         * "hai jarvis"
+         * "halo jarvis"
+         * "oke jarvis"
+         */
         private val PREFIX_WAKE_WORD_REGEX = Regex(
-            pattern = """
-                \b(
-                    hai|
-                    hei|
-                    halo|
-                    ok|
-                    oke
-                )\s+
-                (
-                    jarvis|
-                    jar\s*vis|
-                    djarvis|
-                    carvis|
-                    jarves|
-                    yarvis|
-                    jarviz
-                )\b
-            """.trimIndent(),
-            option = RegexOption.IGNORE_CASE
+            "\\b(" +
+                    "hai|" +
+                    "hei|" +
+                    "halo|" +
+                    "ok|" +
+                    "oke" +
+                    ")\\s+" +
+                    "(" +
+                    "jarvis|" +
+                    "jar\\s*vis|" +
+                    "djarvis|" +
+                    "carvis|" +
+                    "jarves|" +
+                    "yarvis|" +
+                    "jarviz" +
+                    ")\\b",
+            RegexOption.IGNORE_CASE
         )
     }
 
@@ -124,11 +134,11 @@ class WakeWordDetector(
             Dispatchers.Default + Job()
         )
 
-    private var speechRecognizer: SpeechRecognizer? =
-        null
+    private var speechRecognizer:
+            SpeechRecognizer? = null
 
     private var listener:
-        ((WakeWordEvent) -> Unit)? = null
+            ((WakeWordEvent) -> Unit)? = null
 
     @Volatile
     private var isPassiveRunning = false
@@ -140,14 +150,18 @@ class WakeWordDetector(
     private var isMutedDuringTts = false
 
     /**
-     * Prevents multiple callbacks from the same
-     * recognition session.
+     * Mencegah satu wake word menghasilkan
+     * event berkali-kali.
      */
     @Volatile
     private var detectionAlreadySent = false
 
     /**
-     * Used to invalidate old scheduled restart jobs.
+     * Setiap session mempunyai generation.
+     *
+     * Ini mencegah coroutine restart lama
+     * menyalakan recognizer setelah detector
+     * sebenarnya sudah dihentikan.
      */
     @Volatile
     private var sessionGeneration = 0L
@@ -155,9 +169,13 @@ class WakeWordDetector(
     private val _isListening =
         MutableStateFlow(false)
 
-    val isListening: StateFlow<Boolean> =
+    val isListening:
+            StateFlow<Boolean> =
         _isListening.asStateFlow()
 
+    /**
+     * RecognitionListener
+     */
     private val recognitionListener =
         object : RecognitionListener {
 
@@ -169,15 +187,15 @@ class WakeWordDetector(
                     return
                 }
 
-                Log.d(
-                    TAG,
-                    "Passive recognizer ready"
-                )
-
                 _isListening.value = true
 
                 listener?.invoke(
                     WakeWordEvent.StatusChanged(true)
+                )
+
+                Log.d(
+                    TAG,
+                    "Passive recognizer ready"
                 )
             }
 
@@ -189,7 +207,7 @@ class WakeWordDetector(
 
                 Log.d(
                     TAG,
-                    "Voice detected while waiting for JARVIS"
+                    "Speech detected while waiting for JARVIS"
                 )
             }
 
@@ -215,14 +233,16 @@ class WakeWordDetector(
             override fun onBufferReceived(
                 buffer: ByteArray?
             ) {
-                // Audio is never persisted.
+                /*
+                 * Audio buffer tidak disimpan.
+                 */
             }
 
             override fun onEndOfSpeech() {
 
                 Log.d(
                     TAG,
-                    "Passive recognition utterance ended"
+                    "Passive utterance ended"
                 )
             }
 
@@ -230,18 +250,12 @@ class WakeWordDetector(
                 error: Int
             ) {
 
-                if (!isPassiveRunning) {
+                if (
+                    !isPassiveRunning ||
+                    detectionAlreadySent
+                ) {
                     return
                 }
-
-                if (detectionAlreadySent) {
-                    return
-                }
-
-                Log.d(
-                    TAG,
-                    "Passive recognizer error: $error"
-                )
 
                 cleanupRecognizer()
 
@@ -251,6 +265,11 @@ class WakeWordDetector(
                 ) {
                     return
                 }
+
+                Log.d(
+                    TAG,
+                    "Passive recognizer error: $error"
+                )
 
                 when (error) {
 
@@ -263,8 +282,6 @@ class WakeWordDetector(
                                 isRecoverable = false
                             )
                         )
-
-                        return
                     }
 
                     SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
@@ -277,15 +294,14 @@ class WakeWordDetector(
                     SpeechRecognizer.ERROR_NO_MATCH,
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
 
+                        /*
+                         * Ini normal pada passive listening.
+                         *
+                         * Tidak perlu menampilkan error
+                         * kepada pengguna.
+                         */
                         restartPassiveListening(
                             RESTART_DELAY_NORMAL
-                        )
-                    }
-
-                    SpeechRecognizer.ERROR_CLIENT -> {
-
-                        restartPassiveListening(
-                            RESTART_DELAY_ERROR
                         )
                     }
 
@@ -302,21 +318,18 @@ class WakeWordDetector(
                 results: Bundle?
             ) {
 
-                if (!isSessionValid()) {
+                if (
+                    !isSessionValid() ||
+                    detectionAlreadySent
+                ) {
                     return
                 }
-
-                if (detectionAlreadySent) {
-                    return
-                }
-
-                val matches =
-                    results?.getStringArrayList(
-                        SpeechRecognizer.RESULTS_RECOGNITION
-                    )
 
                 val text =
-                    matches
+                    results
+                        ?.getStringArrayList(
+                            SpeechRecognizer.RESULTS_RECOGNITION
+                        )
                         ?.firstOrNull()
                         ?.trim()
                         .orEmpty()
@@ -337,7 +350,7 @@ class WakeWordDetector(
 
                     Log.i(
                         TAG,
-                        "JARVIS DETECTED. command=${detection.inlineCommand}"
+                        "JARVIS DETECTED: inline=${detection.inlineCommand}"
                     )
 
                     listener?.invoke(
@@ -348,6 +361,16 @@ class WakeWordDetector(
 
                     return
                 }
+
+                /*
+                 * Bukan JARVIS.
+                 *
+                 * Abaikan sepenuhnya.
+                 */
+                Log.d(
+                    TAG,
+                    "No wake word detected"
+                )
 
                 if (
                     isPassiveRunning &&
@@ -365,21 +388,18 @@ class WakeWordDetector(
                 partialResults: Bundle?
             ) {
 
-                if (!isSessionValid()) {
+                if (
+                    !isSessionValid() ||
+                    detectionAlreadySent
+                ) {
                     return
                 }
-
-                if (detectionAlreadySent) {
-                    return
-                }
-
-                val partials =
-                    partialResults?.getStringArrayList(
-                        SpeechRecognizer.RESULTS_RECOGNITION
-                    )
 
                 val text =
-                    partials
+                    partialResults
+                        ?.getStringArrayList(
+                            SpeechRecognizer.RESULTS_RECOGNITION
+                        )
                         ?.firstOrNull()
                         ?.trim()
                         .orEmpty()
@@ -388,33 +408,61 @@ class WakeWordDetector(
                     return
                 }
 
+                Log.d(
+                    TAG,
+                    "Partial passive result: \"$text\""
+                )
+
                 val detection =
                     evaluateWakeWord(text)
 
-                if (detection != null) {
-
-                    detectionAlreadySent = true
-
-                    Log.i(
-                        TAG,
-                        "JARVIS detected from partial result: \"$text\""
-                    )
-
-                    cleanupRecognizer()
-
-                    listener?.invoke(
-                        WakeWordEvent.Detected(
-                            detection.inlineCommand
-                        )
-                    )
+                if (detection == null) {
+                    return
                 }
+
+                /*
+                 * PENTING:
+                 *
+                 * Jangan langsung memicu response
+                 * kalau partial result hanya:
+                 *
+                 * "JARVIS"
+                 *
+                 * Karena user mungkin sebenarnya mengatakan:
+                 *
+                 * "JARVIS, buka YouTube"
+                 *
+                 * dan recognizer belum selesai mendengar.
+                 *
+                 * Inline command boleh langsung diproses.
+                 */
+                if (
+                    detection.inlineCommand.isNullOrBlank()
+                ) {
+                    return
+                }
+
+                detectionAlreadySent = true
+
+                cleanupRecognizer()
+
+                Log.i(
+                    TAG,
+                    "JARVIS + INLINE COMMAND detected"
+                )
+
+                listener?.invoke(
+                    WakeWordEvent.Detected(
+                        detection.inlineCommand
+                    )
+                )
             }
 
             override fun onEvent(
                 eventType: Int,
                 params: Bundle?
             ) {
-                // Not required.
+                // Tidak digunakan.
             }
         }
 
@@ -423,22 +471,7 @@ class WakeWordDetector(
     )
 
     /**
-     * Determines whether the supplied text contains
-     * the JARVIS wake word.
-     *
-     * Examples:
-     *
-     * JARVIS
-     * -> WakeWordMatch(null)
-     *
-     * JARVIS buka YouTube
-     * -> WakeWordMatch("buka YouTube")
-     *
-     * Hai JARVIS buka kamera
-     * -> WakeWordMatch("buka kamera")
-     *
-     * Besok saya sekolah
-     * -> null
+     * Mengecek apakah text mengandung wake word.
      */
     fun evaluateWakeWord(
         text: String
@@ -459,8 +492,16 @@ class WakeWordDetector(
             return null
         }
 
+        /*
+         * Contoh:
+         *
+         * "jarvis"
+         * "jarvis buka youtube"
+         */
         val directMatch =
-            WAKE_WORD_REGEX.find(normalized)
+            WAKE_WORD_REGEX.find(
+                normalized
+            )
 
         if (directMatch != null) {
 
@@ -470,29 +511,34 @@ class WakeWordDetector(
             )
         }
 
+        /*
+         * Contoh:
+         *
+         * "halo jarvis"
+         * "oke jarvis buka youtube"
+         */
         val prefixMatch =
-            PREFIX_WAKE_WORD_REGEX.find(normalized)
+            PREFIX_WAKE_WORD_REGEX.find(
+                normalized
+            )
 
         if (prefixMatch != null) {
 
-            val afterPrefix =
-                normalized
-                    .substring(
-                        prefixMatch.range.last + 1
-                    )
-                    .trim()
-
             val command =
                 cleanInlineCommand(
-                    afterPrefix
+                    normalized.substring(
+                        prefixMatch.range.last + 1
+                    )
                 )
 
             return WakeWordMatch(
-                inlineCommand =
-                    command
+                inlineCommand = command
             )
         }
 
+        /*
+         * Tidak ada JARVIS.
+         */
         return null
     }
 
@@ -502,22 +548,21 @@ class WakeWordDetector(
     ): WakeWordMatch {
 
         val afterWakeWord =
-            text
-                .substring(
-                    match.range.last + 1
-                )
-                .trim()
-
-        val command =
-            cleanInlineCommand(
-                afterWakeWord
+            text.substring(
+                match.range.last + 1
             )
 
         return WakeWordMatch(
-            inlineCommand = command
+            inlineCommand =
+                cleanInlineCommand(
+                    afterWakeWord
+                )
         )
     }
 
+    /**
+     * Membersihkan command setelah wake word.
+     */
     private fun cleanInlineCommand(
         text: String
     ): String? {
@@ -530,16 +575,14 @@ class WakeWordDetector(
                 .removePrefix("-")
                 .trim()
 
-        if (
-            cleaned.isBlank() ||
-            cleaned.length < 3
-        ) {
-            return null
+        return cleaned.takeIf {
+            it.length >= 3
         }
-
-        return cleaned
     }
 
+    /**
+     * Mulai passive listening.
+     */
     fun start(
         onEvent: (WakeWordEvent) -> Unit
     ) {
@@ -556,14 +599,14 @@ class WakeWordDetector(
 
             sessionGeneration++
 
-            scheduleStartInternal(
+            scheduleStart(
                 delayMs = 0L,
                 generation = sessionGeneration
             )
         }
     }
 
-    private fun scheduleStartInternal(
+    private fun scheduleStart(
         delayMs: Long,
         generation: Long
     ) {
@@ -598,6 +641,9 @@ class WakeWordDetector(
         }
     }
 
+    /**
+     * Membuat satu sesi SpeechRecognizer.
+     */
     private fun startInternal(
         generation: Long
     ) {
@@ -655,13 +701,10 @@ class WakeWordDetector(
 
             detectionAlreadySent = false
 
-            val appContext =
-                context.applicationContext
-
             speechRecognizer =
                 SpeechRecognizer
                     .createSpeechRecognizer(
-                        appContext
+                        context.applicationContext
                     )
                     .apply {
 
@@ -706,25 +749,26 @@ class WakeWordDetector(
                     )
 
                     /*
-                     * Short recognition windows are intentional.
+                     * Memberikan waktu yang cukup untuk:
                      *
-                     * We restart after the utterance ends
-                     * instead of keeping one SpeechRecognizer
-                     * alive indefinitely.
+                     * "JARVIS, buka YouTube"
                      */
                     putExtra(
-                        RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
-                        1000L
-                    )
-
-                    putExtra(
-                        RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
+                        RecognizerIntent
+                            .EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS,
                         1200L
                     )
 
                     putExtra(
-                        RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
-                        900L
+                        RecognizerIntent
+                            .EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS,
+                        1800L
+                    )
+
+                    putExtra(
+                        RecognizerIntent
+                            .EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS,
+                        1500L
                     )
                 }
 
@@ -733,6 +777,11 @@ class WakeWordDetector(
             )
 
             _isListening.value = true
+
+            Log.d(
+                TAG,
+                "Passive JARVIS listening started"
+            )
 
         } catch (e: Exception) {
 
@@ -744,16 +793,9 @@ class WakeWordDetector(
 
             cleanupRecognizer()
 
-            if (
-                isPassiveRunning &&
-                !isPaused &&
-                !isMutedDuringTts
-            ) {
-
-                restartPassiveListening(
-                    RESTART_DELAY_ERROR
-                )
-            }
+            restartPassiveListening(
+                RESTART_DELAY_ERROR
+            )
         }
     }
 
@@ -769,36 +811,45 @@ class WakeWordDetector(
             return
         }
 
-        val generation =
-            sessionGeneration
-
-        scheduleStartInternal(
+        scheduleStart(
             delayMs,
-            generation
+            sessionGeneration
         )
     }
 
+    /**
+     * Dipanggil ketika JARVIS akan berbicara
+     * atau ketika microphone harus diberikan
+     * kepada SpeechManager.
+     */
     fun muteForTts() {
 
         mainHandler.post {
 
             isMutedDuringTts = true
 
-            sessionGeneration++
-
             detectionAlreadySent = true
+
+            sessionGeneration++
 
             cleanupRecognizer()
 
             _isListening.value = false
 
+            listener?.invoke(
+                WakeWordEvent.StatusChanged(false)
+            )
+
             Log.d(
                 TAG,
-                "Wake-word detector muted"
+                "Wake word detector muted"
             )
         }
     }
 
+    /**
+     * Mengaktifkan kembali passive listening.
+     */
     fun unmuteAfterTts() {
 
         mainHandler.post {
@@ -816,17 +867,14 @@ class WakeWordDetector(
 
             sessionGeneration++
 
-            val generation =
-                sessionGeneration
-
-            scheduleStartInternal(
-                450L,
-                generation
+            scheduleStart(
+                delayMs = 350L,
+                generation = sessionGeneration
             )
 
             Log.d(
                 TAG,
-                "Wake-word detector resumed"
+                "Wake word detector resumed"
             )
         }
     }
@@ -838,8 +886,6 @@ class WakeWordDetector(
             isPaused = true
 
             sessionGeneration++
-
-            detectionAlreadySent = true
 
             cleanupRecognizer()
 
@@ -857,7 +903,10 @@ class WakeWordDetector(
 
             isPaused = false
 
-            if (!isPassiveRunning) {
+            if (
+                !isPassiveRunning ||
+                isMutedDuringTts
+            ) {
                 return@post
             }
 
@@ -865,16 +914,16 @@ class WakeWordDetector(
 
             detectionAlreadySent = false
 
-            val generation =
-                sessionGeneration
-
-            scheduleStartInternal(
-                150L,
-                generation
+            scheduleStart(
+                delayMs = 100L,
+                generation = sessionGeneration
             )
         }
     }
 
+    /**
+     * Hentikan detector sepenuhnya.
+     */
     fun stop() {
 
         mainHandler.post {
@@ -883,9 +932,9 @@ class WakeWordDetector(
             isPaused = false
             isMutedDuringTts = false
 
-            sessionGeneration++
-
             detectionAlreadySent = true
+
+            sessionGeneration++
 
             cleanupRecognizer()
 
@@ -895,11 +944,9 @@ class WakeWordDetector(
                 WakeWordEvent.StatusChanged(false)
             )
 
-            listener = null
-
             Log.d(
                 TAG,
-                "Wake-word detector stopped"
+                "Wake word detector stopped"
             )
         }
     }
@@ -907,10 +954,13 @@ class WakeWordDetector(
     private fun isSessionValid(): Boolean {
 
         return isPassiveRunning &&
-            !isPaused &&
-            !isMutedDuringTts
+                !isPaused &&
+                !isMutedDuringTts
     }
 
+    /**
+     * Membersihkan SpeechRecognizer.
+     */
     private fun cleanupRecognizer() {
 
         try {
@@ -918,33 +968,23 @@ class WakeWordDetector(
             speechRecognizer
                 ?.setRecognitionListener(null)
 
-        } catch (_: Exception) {
-        }
+            speechRecognizer?.cancel()
 
-        try {
-
-            speechRecognizer
-                ?.cancel()
-
-        } catch (_: Exception) {
-        }
-
-        try {
-
-            speechRecognizer
-                ?.destroy()
+            speechRecognizer?.destroy()
 
         } catch (e: Exception) {
 
             Log.e(
                 TAG,
-                "Error destroying recognizer",
+                "Error cleaning up recognizer",
                 e
             )
+
+        } finally {
+
+            speechRecognizer = null
+
+            _isListening.value = false
         }
-
-        speechRecognizer = null
-
-        _isListening.value = false
     }
 }
