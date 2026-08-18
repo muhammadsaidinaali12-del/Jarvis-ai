@@ -57,9 +57,10 @@ data class JarvisUiState(
     val userSpokenText: String = "",
 
     val jarvisResponseText: String =
-        "Halo Tuan, saya JARVIS V1. Panggil saya dengan mengucapkan \"JARVIS\".",
+        "Halo Tuan, saya JARVIS V1. Panggil saya dengan mengucapkan \"JARVIS\" atau tekan tombol di bawah untuk memberikan perintah.",
 
-    val history: List<DialogueItem> = emptyList(),
+    val history: List<DialogueItem> =
+        emptyList(),
 
     val audioLevel: Float = 0f,
 
@@ -78,17 +79,14 @@ class JarvisViewModel(
 
     private val tag = "JarvisViewModel"
 
-    private val app =
-        application.applicationContext
-
     private val speechManager =
-        SpeechManager(app)
+        SpeechManager(application)
 
     private val ttsManager =
-        TtsManager(app)
+        TtsManager(application)
 
     private val jarvisBrain =
-        JarvisBrain(app)
+        JarvisBrain(application)
 
     private val _status =
         MutableStateFlow(
@@ -100,7 +98,7 @@ class JarvisViewModel(
 
     private val _jarvisResponseText =
         MutableStateFlow(
-            "Halo Tuan, saya JARVIS V1. Panggil saya dengan mengucapkan \"JARVIS\"."
+            "Halo Tuan, saya JARVIS V1. Panggil saya dengan mengucapkan \"JARVIS\" atau tekan tombol di bawah untuk memberikan perintah."
         )
 
     private val _history =
@@ -114,11 +112,10 @@ class JarvisViewModel(
     private val _passiveAudioLevel =
         MutableStateFlow(0f)
 
-    private var activeListeningTimeoutJob: Job? = null
+    private var activeListeningTimeoutJob: Job? =
+        null
 
     private var isProcessingCommand = false
-
-    private var isDestroying = false
 
     val isRecognitionAvailable: Boolean =
         speechManager.isRecognitionAvailable
@@ -179,30 +176,30 @@ class JarvisViewModel(
                         ) {
                             "JARVIS AKTIF: \"$spokenText\""
                         } else {
-                            "JARVIS AKTIF // MENDENGARKAN PERINTAH..."
+                            "JARVIS AKTIF // MENDENGARKAN PERINTAH ANDA..."
                         }
 
                     AssistantStatus.PROCESSING ->
-                        "JARVIS MEMPROSES PERINTAH..."
+                        "JARVIS MEMPROSES PERINTAH SUARA..."
 
                     AssistantStatus.SPEAKING ->
-                        "JARVIS SEDANG BERBICARA..."
+                        "JARVIS SEDANG MENJAWAB..."
 
                     AssistantStatus.PAUSED ->
                         "JARVIS DIJEDA // MIKROFON NONAKTIF"
 
                     AssistantStatus.ERROR ->
-                        "STATUS ERROR: ${error ?: "Kesalahan tidak diketahui"}"
+                        "STATUS: ${error ?: "ERROR"}"
                 }
 
             val audioLevel =
                 when (status) {
 
-                    AssistantStatus.WAKE_WORD_LISTENING ->
-                        passiveRms
-
                     AssistantStatus.ACTIVE_LISTENING ->
                         activeRms
+
+                    AssistantStatus.WAKE_WORD_LISTENING ->
+                        passiveRms
 
                     AssistantStatus.SPEAKING ->
                         0.45f
@@ -244,12 +241,52 @@ class JarvisViewModel(
 
         observeWakeWordService()
 
+        /*
+         * Tidak memaksa service berjalan apabila permission
+         * RECORD_AUDIO belum diberikan.
+         */
         startBackgroundVoiceServiceIfPermitted()
     }
 
     /*
      * =========================================================
-     * SPEECH MANAGER OBSERVER
+     * BACKGROUND VOICE SERVICE
+     * =========================================================
+     */
+
+    fun startBackgroundVoiceServiceIfPermitted() {
+
+        val context =
+            getApplication<Application>()
+
+        if (
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.RECORD_AUDIO
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+
+        try {
+
+            JarvisVoiceService.startService(
+                context
+            )
+
+        } catch (e: Exception) {
+
+            _errorMessage.value =
+                "Gagal menjalankan layanan suara: ${e.localizedMessage}"
+
+            _status.value =
+                AssistantStatus.ERROR
+        }
+    }
+
+    /*
+     * =========================================================
+     * SPEECH MANAGER
      * =========================================================
      */
 
@@ -259,13 +296,9 @@ class JarvisViewModel(
 
             speechManager.speechState.collect { state ->
 
-                if (isDestroying) {
-                    return@collect
-                }
-
                 when (state) {
 
-                    SpeechState.Idle -> {
+                    is SpeechState.Idle -> {
                         // Tidak melakukan apa-apa.
                     }
 
@@ -285,7 +318,7 @@ class JarvisViewModel(
                         }
                     }
 
-                    SpeechState.Processing -> {
+                    is SpeechState.Processing -> {
 
                         _status.value =
                             AssistantStatus.PROCESSING
@@ -293,18 +326,12 @@ class JarvisViewModel(
 
                     is SpeechState.Success -> {
 
-                        activeListeningTimeoutJob?.cancel()
+                        _userSpokenText.value =
+                            state.spokenText
 
-                        val text =
-                            state.spokenText.trim()
-
-                        if (text.isBlank()) {
-                            return@collect
-                        }
-
-                        _userSpokenText.value = text
-
-                        processUserInput(text)
+                        processUserInput(
+                            state.spokenText
+                        )
                     }
 
                     is SpeechState.Error -> {
@@ -316,9 +343,7 @@ class JarvisViewModel(
                             return@collect
                         }
 
-                        if (isProcessingCommand) {
-                            return@collect
-                        }
+                        activeListeningTimeoutJob?.cancel()
 
                         _errorMessage.value =
                             state.message
@@ -326,12 +351,17 @@ class JarvisViewModel(
                         _status.value =
                             AssistantStatus.ERROR
 
-                        speakWithWakeWordControl(
-                            if (state.isAudioHardwareIssue) {
+                        val shortMessage =
+                            if (
+                                state.isAudioHardwareIssue
+                            ) {
                                 "Maaf Tuan, suara tidak terdengar jelas. Silakan coba lagi."
                             } else {
                                 "Maaf Tuan, ${state.message}"
                             }
+
+                        speakWithWakeWordControl(
+                            shortMessage
                         ) {
                             returnToWakeWordListening()
                         }
@@ -355,12 +385,8 @@ class JarvisViewModel(
                 .wakeWordEvents
                 .collect { event ->
 
-                    if (isDestroying) {
-                        return@collect
-                    }
-
-                    event?.let {
-                        handleWakeWordEvent(it)
+                    if (event != null) {
+                        handleWakeWordEvent(event)
                     }
                 }
         }
@@ -374,61 +400,43 @@ class JarvisViewModel(
 
             is WakeWordEvent.Detected -> {
 
-                if (
-                    _status.value ==
-                    AssistantStatus.PAUSED
-                ) {
-                    return
-                }
-
-                if (isProcessingCommand) {
-                    return
-                }
-
                 _errorMessage.value = null
-
-                _passiveAudioLevel.value = 0f
 
                 vibratePhone()
 
                 /*
-                 * -------------------------------------------------
                  * INLINE COMMAND
                  *
-                 * "JARVIS, buka kamera"
-                 * -------------------------------------------------
+                 * Contoh:
+                 * "JARVIS buka kamera"
                  */
 
-                val inlineCommand =
-                    event.inlineCommand
-                        ?.trim()
+                if (
+                    !event.inlineCommand
+                        .isNullOrBlank()
+                ) {
 
-                if (!inlineCommand.isNullOrBlank()) {
+                    val command =
+                        event.inlineCommand.trim()
 
                     _userSpokenText.value =
-                        inlineCommand
+                        command
 
                     _status.value =
                         AssistantStatus.PROCESSING
 
-                    muteWakeWordDetector()
-
-                    processUserInput(
-                        inlineCommand
-                    )
+                    processUserInput(command)
 
                     return
                 }
 
                 /*
-                 * -------------------------------------------------
-                 * STANDALONE WAKE WORD
+                 * Hanya wake word:
                  *
                  * "JARVIS"
                  *
-                 * -> "Ya, Tuan."
-                 * -> mulai mendengarkan
-                 * -------------------------------------------------
+                 * JARVIS menjawab:
+                 * "Ya, Tuan."
                  */
 
                 _userSpokenText.value =
@@ -472,7 +480,8 @@ class JarvisViewModel(
             }
 
             is WakeWordEvent.StatusChanged -> {
-                // Status detector tidak menjadi status utama UI.
+                // Status detector tidak digunakan sebagai
+                // status utama UI.
             }
         }
     }
@@ -485,10 +494,6 @@ class JarvisViewModel(
 
     private fun startActiveCommandListening() {
 
-        if (isDestroying) {
-            return
-        }
-
         if (
             _status.value ==
             AssistantStatus.PAUSED
@@ -496,14 +501,7 @@ class JarvisViewModel(
             return
         }
 
-        /*
-         * WakeWordDetector dan SpeechManager tidak boleh
-         * menggunakan mikrofon secara bersamaan.
-         */
-
         muteWakeWordDetector()
-
-        _errorMessage.value = null
 
         _status.value =
             AssistantStatus.ACTIVE_LISTENING
@@ -511,14 +509,16 @@ class JarvisViewModel(
         _userSpokenText.value =
             "Mendengarkan..."
 
-        speechManager.startListening()
+        _errorMessage.value = null
 
         activeListeningTimeoutJob?.cancel()
+
+        speechManager.startListening()
 
         activeListeningTimeoutJob =
             viewModelScope.launch {
 
-                delay(10000L)
+                delay(10000)
 
                 if (
                     _status.value ==
@@ -527,19 +527,13 @@ class JarvisViewModel(
 
                     speechManager.stopListening()
 
-                    delay(400L)
+                    delay(300)
 
                     if (
                         _status.value ==
                         AssistantStatus.ACTIVE_LISTENING
                     ) {
-
-                        speakWithWakeWordControl(
-                            "Tidak ada perintah yang terdengar, Tuan."
-                        ) {
-
-                            returnToWakeWordListening()
-                        }
+                        returnToWakeWordListening()
                     }
                 }
             }
@@ -547,20 +541,22 @@ class JarvisViewModel(
 
     /*
      * =========================================================
-     * PROCESS USER COMMAND
+     * PROCESS COMMAND
      * =========================================================
      */
 
-    private fun processUserInput(
+    fun processUserInput(
         input: String
     ) {
 
-        if (isProcessingCommand) {
+        val command =
+            input.trim()
+
+        if (command.isBlank()) {
             return
         }
 
-        if (input.isBlank()) {
-            returnToWakeWordListening()
+        if (isProcessingCommand) {
             return
         }
 
@@ -573,37 +569,27 @@ class JarvisViewModel(
 
         _errorMessage.value = null
 
-        muteWakeWordDetector()
-
         viewModelScope.launch {
 
             try {
 
                 val response =
                     jarvisBrain.processCommand(
-                        input
+                        command
                     )
-
-                if (isDestroying) {
-                    return@launch
-                }
 
                 _jarvisResponseText.value =
                     response.displayText
 
-                /*
-                 * Simpan percakapan.
-                 */
-
                 val timestamp =
                     SimpleDateFormat(
-                        "HH:mm",
-                        Locale.forLanguageTag("id-ID")
+                        "HH:mm:ss",
+                        Locale.getDefault()
                     ).format(Date())
 
-                val dialogue =
+                val item =
                     DialogueItem(
-                        userPrompt = input,
+                        userPrompt = command,
                         jarvisReply = response.displayText,
                         timestamp = timestamp,
                         executedActionTitle =
@@ -611,11 +597,7 @@ class JarvisViewModel(
                     )
 
                 _history.value =
-                    _history.value + dialogue
-
-                /*
-                 * JARVIS menjawab melalui TTS.
-                 */
+                    _history.value + item
 
                 speakWithWakeWordControl(
                     response.spokenText
@@ -623,24 +605,30 @@ class JarvisViewModel(
 
                     isProcessingCommand = false
 
-                    returnToWakeWordListening()
+                    if (
+                        _status.value !=
+                        AssistantStatus.PAUSED
+                    ) {
+                        returnToWakeWordListening()
+                    }
                 }
 
             } catch (e: Exception) {
 
                 isProcessingCommand = false
 
-                _errorMessage.value =
-                    e.localizedMessage
-                        ?: "Terjadi kesalahan."
+                val message =
+                    "Maaf Tuan, terjadi kesalahan saat memproses perintah."
 
-                _status.value =
-                    AssistantStatus.ERROR
+                _errorMessage.value =
+                    e.localizedMessage ?: message
+
+                _jarvisResponseText.value =
+                    message
 
                 speakWithWakeWordControl(
-                    "Maaf Tuan, terjadi kesalahan saat memproses perintah."
+                    message
                 ) {
-
                     returnToWakeWordListening()
                 }
             }
@@ -649,7 +637,7 @@ class JarvisViewModel(
 
     /*
      * =========================================================
-     * TTS
+     * TTS + WAKE WORD CONTROL
      * =========================================================
      */
 
@@ -657,18 +645,6 @@ class JarvisViewModel(
         text: String,
         onFinished: () -> Unit
     ) {
-
-        if (isDestroying) {
-            return
-        }
-
-        /*
-         * PENTING:
-         *
-         * Matikan detector SEBELUM TTS.
-         *
-         * Ini mencegah JARVIS mendengar suara TTS-nya sendiri.
-         */
 
         muteWakeWordDetector()
 
@@ -679,16 +655,7 @@ class JarvisViewModel(
 
             viewModelScope.launch {
 
-                /*
-                 * Beri sedikit waktu agar audio benar-benar
-                 * selesai sebelum mikrofon diaktifkan lagi.
-                 */
-
-                delay(300L)
-
-                if (isDestroying) {
-                    return@launch
-                }
+                delay(250)
 
                 if (
                     _status.value ==
@@ -704,15 +671,11 @@ class JarvisViewModel(
 
     /*
      * =========================================================
-     * RETURN TO WAKE WORD LISTENING
+     * RETURN TO WAKE WORD
      * =========================================================
      */
 
     private fun returnToWakeWordListening() {
-
-        if (isDestroying) {
-            return
-        }
 
         activeListeningTimeoutJob?.cancel()
 
@@ -725,11 +688,7 @@ class JarvisViewModel(
 
         viewModelScope.launch {
 
-            delay(500L)
-
-            if (isDestroying) {
-                return@launch
-            }
+            delay(500)
 
             if (
                 _status.value ==
@@ -741,15 +700,13 @@ class JarvisViewModel(
             _status.value =
                 AssistantStatus.WAKE_WORD_LISTENING
 
-            _errorMessage.value = null
+            _passiveAudioLevel.value =
+                0f
 
-            _userSpokenText.value = ""
+            _userSpokenText.value =
+                ""
 
-            _passiveAudioLevel.value = 0f
-
-            /*
-             * Hidupkan kembali wake-word detector.
-             */
+            isProcessingCommand = false
 
             unmuteWakeWordDetector()
         }
@@ -766,198 +723,36 @@ class JarvisViewModel(
         try {
 
             JarvisVoiceService
-                .muteDetectorForTts(app)
+                .muteDetectorForTts(
+                    getApplication()
+                )
 
         } catch (e: Exception) {
-            android.util.Log.e(
-                tag,
-                "Failed to mute wake word detector",
-                e
-            )
+            // Service mungkin belum aktif.
         }
     }
 
     private fun unmuteWakeWordDetector() {
 
-        if (
-            _status.value ==
-            AssistantStatus.PAUSED
-        ) {
-            return
-        }
-
         try {
 
             JarvisVoiceService
-                .unmuteDetectorAfterTts(app)
+                .unmuteDetectorAfterTts(
+                    getApplication()
+                )
 
         } catch (e: Exception) {
-            android.util.Log.e(
-                tag,
-                "Failed to unmute wake word detector",
-                e
-            )
+            // Service mungkin belum aktif.
         }
     }
 
     /*
      * =========================================================
-     * FOREGROUND VOICE SERVICE
+     * BUTTON ACTIONS
      * =========================================================
      */
 
-    private fun startBackgroundVoiceServiceIfPermitted() {
-
-        val microphoneGranted =
-            ContextCompat.checkSelfPermission(
-                app,
-                Manifest.permission.RECORD_AUDIO
-            ) == PackageManager.PERMISSION_GRANTED
-
-        if (!microphoneGranted) {
-
-            _errorMessage.value =
-                "Izin mikrofon diperlukan agar JARVIS dapat mendengarkan wake word."
-
-            _status.value =
-                AssistantStatus.ERROR
-
-            return
-        }
-
-        if (
-            Build.VERSION.SDK_INT >=
-            Build.VERSION_CODES.TIRAMISU
-        ) {
-
-            val notificationGranted =
-                ContextCompat.checkSelfPermission(
-                    app,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) == PackageManager.PERMISSION_GRANTED
-
-            if (!notificationGranted) {
-
-                /*
-                 * Jangan memaksa service foreground microphone
-                 * berjalan sebelum izin notifikasi tersedia pada
-                 * perangkat yang memerlukannya.
-                 */
-
-                _errorMessage.value =
-                    "Izin notifikasi diperlukan untuk menjalankan JARVIS di latar belakang."
-
-                _status.value =
-                    AssistantStatus.ERROR
-
-                return
-            }
-        }
-
-        try {
-
-            JarvisVoiceService
-                .startService(app)
-
-            _status.value =
-                AssistantStatus.WAKE_WORD_LISTENING
-
-            _errorMessage.value = null
-
-        } catch (e: Exception) {
-
-            android.util.Log.e(
-                tag,
-                "Failed to start JarvisVoiceService",
-                e
-            )
-
-            _errorMessage.value =
-                "Gagal menjalankan layanan suara JARVIS."
-
-            _status.value =
-                AssistantStatus.ERROR
-        }
-    }
-
-    /*
-     * =========================================================
-     * PAUSE / RESUME
-     * =========================================================
-     */
-
-    fun pauseJarvis() {
-
-        activeListeningTimeoutJob?.cancel()
-
-        speechManager.cancel()
-
-        muteWakeWordDetector()
-
-        ttsManager.stop()
-
-        _status.value =
-            AssistantStatus.PAUSED
-
-        _userSpokenText.value = ""
-
-        _passiveAudioLevel.value = 0f
-
-        try {
-
-            JarvisVoiceService
-                .pauseService(app)
-
-        } catch (e: Exception) {
-            android.util.Log.e(
-                tag,
-                "Failed to pause service",
-                e
-            )
-        }
-    }
-
-    fun resumeJarvis() {
-
-        if (isDestroying) {
-            return
-        }
-
-        _errorMessage.value = null
-
-        _status.value =
-            AssistantStatus.WAKE_WORD_LISTENING
-
-        try {
-
-            JarvisVoiceService
-                .resumeService(app)
-
-        } catch (e: Exception) {
-            android.util.Log.e(
-                tag,
-                "Failed to resume service",
-                e
-            )
-        }
-    }
-
-    /*
-     * =========================================================
-     * MANUAL TEXT INPUT
-     * =========================================================
-     */
-
-    fun submitManualInput(
-        text: String
-    ) {
-
-        val cleanText =
-            text.trim()
-
-        if (cleanText.isBlank()) {
-            return
-        }
+    fun onSpeakButtonPressed() {
 
         if (
             _status.value ==
@@ -966,25 +761,9 @@ class JarvisViewModel(
             return
         }
 
-        _userSpokenText.value =
-            cleanText
-
-        processUserInput(
-            cleanText
-        )
-    }
-
-    /*
-     * =========================================================
-     * MANUAL MICROPHONE
-     * =========================================================
-     */
-
-    fun startManualListening() {
-
         if (
             _status.value ==
-            AssistantStatus.PAUSED
+            AssistantStatus.SPEAKING
         ) {
             return
         }
@@ -992,22 +771,94 @@ class JarvisViewModel(
         startActiveCommandListening()
     }
 
-    fun stopManualListening() {
+    fun togglePauseResume() {
 
-        activeListeningTimeoutJob?.cancel()
+        val context =
+            getApplication<Application>()
 
-        speechManager.stopListening()
+        if (
+            _status.value ==
+            AssistantStatus.PAUSED
+        ) {
+
+            _errorMessage.value = null
+
+            JarvisVoiceService.resumeService(
+                context
+            )
+
+            _status.value =
+                AssistantStatus.WAKE_WORD_LISTENING
+
+            _userSpokenText.value = ""
+
+        } else {
+
+            activeListeningTimeoutJob?.cancel()
+
+            speechManager.cancel()
+
+            ttsManager.stop()
+
+            JarvisVoiceService.pauseService(
+                context
+            )
+
+            _passiveAudioLevel.value =
+                0f
+
+            _status.value =
+                AssistantStatus.PAUSED
+
+            _userSpokenText.value = ""
+        }
     }
 
-    /*
-     * =========================================================
-     * TTS MUTE
-     * =========================================================
-     */
-
-    fun toggleTtsMute(): Boolean {
+    fun toggleMute(): Boolean {
 
         return ttsManager.toggleMute()
+    }
+
+    fun clearHistory() {
+
+        _history.value =
+            emptyList()
+    }
+
+    fun replayAudio(
+        text: String
+    ) {
+
+        if (text.isBlank()) {
+            return
+        }
+
+        if (
+            _status.value ==
+            AssistantStatus.PAUSED
+        ) {
+            return
+        }
+
+        muteWakeWordDetector()
+
+        _status.value =
+            AssistantStatus.SPEAKING
+
+        ttsManager.speak(text) {
+
+            viewModelScope.launch {
+
+                delay(250)
+
+                if (
+                    _status.value !=
+                    AssistantStatus.PAUSED
+                ) {
+                    returnToWakeWordListening()
+                }
+            }
+        }
     }
 
     /*
@@ -1020,13 +871,25 @@ class JarvisViewModel(
 
         try {
 
+            val context =
+                getApplication<Application>()
+
+            if (
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.VIBRATE
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                return
+            }
+
             if (
                 Build.VERSION.SDK_INT >=
                 Build.VERSION_CODES.S
             ) {
 
                 val vibratorManager =
-                    app.getSystemService(
+                    context.getSystemService(
                         VibratorManager::class.java
                     )
 
@@ -1034,7 +897,7 @@ class JarvisViewModel(
                     ?.defaultVibrator
                     ?.vibrate(
                         VibrationEffect.createOneShot(
-                            80L,
+                            80,
                             VibrationEffect.DEFAULT_AMPLITUDE
                         )
                     )
@@ -1043,20 +906,16 @@ class JarvisViewModel(
 
                 @Suppress("DEPRECATION")
                 val vibrator =
-                    app.getSystemService(
+                    context.getSystemService(
                         Vibrator::class.java
                     )
 
                 @Suppress("DEPRECATION")
-                vibrator?.vibrate(80L)
+                vibrator?.vibrate(80)
             }
 
-        } catch (e: Exception) {
-            android.util.Log.e(
-                tag,
-                "Vibration failed",
-                e
-            )
+        } catch (_: Exception) {
+            // Vibration tidak boleh membuat JARVIS crash.
         }
     }
 
@@ -1067,8 +926,6 @@ class JarvisViewModel(
      */
 
     override fun onCleared() {
-
-        isDestroying = true
 
         activeListeningTimeoutJob?.cancel()
 
