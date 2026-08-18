@@ -76,10 +76,7 @@ class JarvisVoiceService : Service() {
 
             try {
 
-                if (
-                    Build.VERSION.SDK_INT >=
-                    Build.VERSION_CODES.O
-                ) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
 
                     ContextCompat.startForegroundService(
                         context,
@@ -95,7 +92,7 @@ class JarvisVoiceService : Service() {
 
                 Log.e(
                     TAG,
-                    "Unable to start service",
+                    "Unable to start JARVIS voice service",
                     e
                 )
             }
@@ -103,86 +100,73 @@ class JarvisVoiceService : Service() {
 
         fun pauseService(context: Context) {
 
-            val intent =
-                Intent(
-                    context,
-                    JarvisVoiceService::class.java
-                ).apply {
-                    action = ACTION_PAUSE
-                }
-
-            try {
-                context.startService(intent)
-            } catch (e: Exception) {
-                Log.e(TAG, "Unable to pause service", e)
-            }
+            sendAction(
+                context,
+                ACTION_PAUSE
+            )
         }
 
         fun resumeService(context: Context) {
 
-            val intent =
-                Intent(
-                    context,
-                    JarvisVoiceService::class.java
-                ).apply {
-                    action = ACTION_RESUME
-                }
-
-            try {
-                context.startService(intent)
-            } catch (e: Exception) {
-                Log.e(TAG, "Unable to resume service", e)
-            }
+            sendAction(
+                context,
+                ACTION_RESUME
+            )
         }
 
         fun stopService(context: Context) {
 
-            val intent =
-                Intent(
-                    context,
-                    JarvisVoiceService::class.java
-                ).apply {
-                    action = ACTION_STOP
-                }
-
-            try {
-                context.startService(intent)
-            } catch (e: Exception) {
-                Log.e(TAG, "Unable to stop service", e)
-            }
+            sendAction(
+                context,
+                ACTION_STOP
+            )
         }
 
         fun muteDetectorForTts(context: Context) {
 
-            val intent =
-                Intent(
-                    context,
-                    JarvisVoiceService::class.java
-                ).apply {
-                    action = ACTION_MUTE_TTS
-                }
-
-            try {
-                context.startService(intent)
-            } catch (e: Exception) {
-                Log.e(TAG, "Unable to mute detector", e)
-            }
+            sendAction(
+                context,
+                ACTION_MUTE_TTS
+            )
         }
 
         fun unmuteDetectorAfterTts(context: Context) {
 
+            sendAction(
+                context,
+                ACTION_UNMUTE_TTS
+            )
+        }
+
+        private fun sendAction(
+            context: Context,
+            action: String
+        ) {
+
             val intent =
                 Intent(
                     context,
                     JarvisVoiceService::class.java
                 ).apply {
-                    action = ACTION_UNMUTE_TTS
+                    this.action = action
                 }
 
             try {
+
+                /*
+                 * Jika service sudah hidup sebagai foreground
+                 * service, startService() adalah jalur yang
+                 * paling aman untuk mengirim command internal.
+                 */
                 context.startService(intent)
+
             } catch (e: Exception) {
-                Log.e(TAG, "Unable to unmute detector", e)
+
+                Log.e(
+                    TAG,
+                    "Unable to send service action: $action",
+                    e
+                )
             }
         }
     }
@@ -207,14 +191,16 @@ class JarvisVoiceService : Service() {
             WakeWordDetector? = null
 
     /*
-     * Menunjukkan apakah detector sedang
-     * benar-benar diminta untuk berjalan.
+     * TRUE apabila detector sedang aktif.
      */
     private var detectorRunning = false
 
     /*
-     * Menunjukkan apakah detector sedang
-     * dimatikan sementara karena TTS.
+     * TRUE ketika detector harus diam:
+     *
+     * - JARVIS sedang berbicara
+     * - SpeechManager sedang mengambil microphone
+     * - proses active command
      */
     private var detectorMutedForTts = false
 
@@ -230,12 +216,36 @@ class JarvisVoiceService : Service() {
 
         Log.d(
             TAG,
-            "JarvisVoiceService created"
+            "JARVIS Voice Service created"
         )
 
         createNotificationChannel()
 
         createWakeWordDetector()
+    }
+
+    override fun onBind(intent: Intent?): IBinder {
+
+        return binder
+    }
+
+    override fun onDestroy() {
+
+        Log.d(
+            TAG,
+            "JARVIS Voice Service destroying"
+        )
+
+        detectorMutedForTts = true
+
+        stopWakeWordEngine()
+
+        wakeWordDetector = null
+
+        _serviceStatus.value =
+            ServiceState.STOPPED
+
+        super.onDestroy()
     }
 
     private fun createWakeWordDetector() {
@@ -280,35 +290,42 @@ class JarvisVoiceService : Service() {
 
         when (action) {
 
-            ACTION_START ->
+            ACTION_START -> {
                 handleStart()
+            }
 
-            ACTION_PAUSE ->
+            ACTION_PAUSE -> {
                 handlePause()
+            }
 
-            ACTION_RESUME ->
+            ACTION_RESUME -> {
                 handleResume()
+            }
 
-            ACTION_MUTE_TTS ->
+            ACTION_MUTE_TTS -> {
                 muteForTts()
+            }
 
-            ACTION_UNMUTE_TTS ->
+            ACTION_UNMUTE_TTS -> {
                 unmuteAfterTts()
+            }
 
-            ACTION_STOP ->
+            ACTION_STOP -> {
                 handleStop()
+            }
 
-            else ->
+            else -> {
+
                 Log.w(
                     TAG,
                     "Unknown action: $action"
                 )
+            }
         }
 
         /*
-         * Jangan biarkan Android menghentikan
-         * service secara permanen setelah proses
-         * background selesai.
+         * Meminta Android untuk mempertahankan service
+         * bila proses aplikasi direstart.
          */
         return START_STICKY
     }
@@ -325,7 +342,7 @@ class JarvisVoiceService : Service() {
 
             Log.w(
                 TAG,
-                "RECORD_AUDIO permission missing"
+                "Cannot start: RECORD_AUDIO permission missing"
             )
 
             _serviceStatus.value =
@@ -337,15 +354,20 @@ class JarvisVoiceService : Service() {
         detectorMutedForTts = false
 
         startForegroundWithNotification(
-            "JARVIS SIAGA",
-            "Mendengarkan wake word 'JARVIS'...",
-            false
+            title = "JARVIS SIAGA",
+            content = "Mendengarkan wake word \"JARVIS\"...",
+            isPaused = false
         )
 
         _serviceStatus.value =
             ServiceState.RUNNING
 
         startWakeWordEngine()
+
+        Log.i(
+            TAG,
+            "JARVIS passive wake-word mode started"
+        )
     }
 
     /*
@@ -364,12 +386,12 @@ class JarvisVoiceService : Service() {
             ServiceState.PAUSED
 
         updateNotification(
-            "JARVIS DIJEDA",
-            "Mikrofon dinonaktifkan sementara.",
-            true
+            title = "JARVIS DIJEDA",
+            content = "Mikrofon dinonaktifkan sementara.",
+            isPaused = true
         )
 
-        Log.d(
+        Log.i(
             TAG,
             "JARVIS paused"
         )
@@ -396,9 +418,9 @@ class JarvisVoiceService : Service() {
         detectorMutedForTts = false
 
         startForegroundWithNotification(
-            "JARVIS SIAGA",
-            "Mendengarkan wake word 'JARVIS'...",
-            false
+            title = "JARVIS SIAGA",
+            content = "Mendengarkan wake word \"JARVIS\"...",
+            isPaused = false
         )
 
         _serviceStatus.value =
@@ -406,7 +428,7 @@ class JarvisVoiceService : Service() {
 
         startWakeWordEngine()
 
-        Log.d(
+        Log.i(
             TAG,
             "JARVIS resumed"
         )
@@ -420,7 +442,7 @@ class JarvisVoiceService : Service() {
 
     private fun handleStop() {
 
-        detectorMutedForTts = false
+        detectorMutedForTts = true
 
         stopWakeWordEngine()
 
@@ -429,10 +451,7 @@ class JarvisVoiceService : Service() {
 
         try {
 
-            if (
-                Build.VERSION.SDK_INT >=
-                Build.VERSION_CODES.N
-            ) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
 
                 stopForeground(
                     STOP_FOREGROUND_REMOVE
@@ -448,14 +467,14 @@ class JarvisVoiceService : Service() {
 
             Log.e(
                 TAG,
-                "Error stopping foreground",
+                "Error stopping foreground service",
                 e
             )
         }
 
         stopSelf()
 
-        Log.d(
+        Log.i(
             TAG,
             "JARVIS service stopped"
         )
@@ -494,11 +513,21 @@ class JarvisVoiceService : Service() {
             return
         }
 
+        if (_serviceStatus.value != ServiceState.RUNNING) {
+
+            Log.d(
+                TAG,
+                "Service is not RUNNING; detector will not start"
+            )
+
+            return
+        }
+
         if (detectorMutedForTts) {
 
             Log.d(
                 TAG,
-                "Detector is muted for TTS"
+                "Detector currently muted"
             )
 
             return
@@ -537,11 +566,13 @@ class JarvisVoiceService : Service() {
             detector.start { event ->
 
                 /*
-                 * Jangan teruskan event detector
-                 * jika detector sedang dimute.
+                 * Abaikan event yang terlambat ketika detector
+                 * sudah seharusnya diam.
                  */
-
-                if (detectorMutedForTts) {
+                if (
+                    detectorMutedForTts ||
+                    _serviceStatus.value != ServiceState.RUNNING
+                ) {
                     return@start
                 }
 
@@ -551,20 +582,26 @@ class JarvisVoiceService : Service() {
 
                         Log.i(
                             TAG,
-                            "WAKE WORD DETECTED: ${event.inlineCommand}"
+                            "JARVIS WAKE WORD DETECTED. " +
+                                    "Inline command = \"${event.inlineCommand}\""
                         )
 
                         /*
-                         * Matikan detector segera.
+                         * Detector harus langsung melepas microphone.
                          *
-                         * SpeechManager nantinya akan
-                         * mengambil alih microphone.
+                         * SpeechManager akan mengambil alih microphone
+                         * jika dibutuhkan.
                          */
                         detectorMutedForTts = true
 
+                        detectorRunning = false
+
                         try {
+
                             detector.muteForTts()
+
                         } catch (e: Exception) {
+
                             Log.e(
                                 TAG,
                                 "Failed to mute detector after detection",
@@ -576,17 +613,38 @@ class JarvisVoiceService : Service() {
                             event
                     }
 
-                    else -> {
+                    is WakeWordEvent.AudioLevel -> {
 
                         _wakeWordEvents.value =
                             event
+                    }
+
+                    is WakeWordEvent.StatusChanged -> {
+
+                        _wakeWordEvents.value =
+                            event
+                    }
+
+                    is WakeWordEvent.Error -> {
+
+                        _wakeWordEvents.value =
+                            event
+
+                        if (!event.isRecoverable) {
+
+                            Log.e(
+                                TAG,
+                                "Wake-word detector fatal error: " +
+                                        event.message
+                            )
+                        }
                     }
                 }
             }
 
             detectorRunning = true
 
-            Log.d(
+            Log.i(
                 TAG,
                 "WakeWordDetector started"
             )
@@ -605,7 +663,7 @@ class JarvisVoiceService : Service() {
 
     /*
      * =========================================================
-     * STOP WAKE WORD
+     * STOP WAKE WORD ENGINE
      * =========================================================
      */
 
@@ -614,9 +672,9 @@ class JarvisVoiceService : Service() {
         val detector =
             wakeWordDetector
 
-        if (detector == null) {
+        detectorRunning = false
 
-            detectorRunning = false
+        if (detector == null) {
             return
         }
 
@@ -645,8 +703,17 @@ class JarvisVoiceService : Service() {
 
     /*
      * =========================================================
-     * MUTE FOR TTS / ACTIVE LISTENING
+     * MUTE
      * =========================================================
+     *
+     * Dipanggil ketika:
+     *
+     * JARVIS sedang menjawab
+     * atau
+     * SpeechManager sedang mendengarkan command.
+     *
+     * Tujuannya mencegah dua SpeechRecognizer memakai
+     * microphone secara bersamaan.
      */
 
     fun muteForTts() {
@@ -660,11 +727,6 @@ class JarvisVoiceService : Service() {
 
             detector?.muteForTts()
 
-            Log.d(
-                TAG,
-                "WakeWordDetector muted"
-            )
-
         } catch (e: Exception) {
 
             Log.e(
@@ -673,74 +735,169 @@ class JarvisVoiceService : Service() {
                 e
             )
         }
+
+        detectorRunning = false
+
+        Log.d(
+            TAG,
+            "WakeWordDetector muted"
+        )
     }
 
     /*
      * =========================================================
-     * UNMUTE AFTER TTS
+     * UNMUTE
      * =========================================================
+     *
+     * Dipanggil setelah JARVIS selesai berbicara.
+     *
+     * Detector kembali ke mode:
+     *
+     *     LISTENING FOR "JARVIS"
      */
 
     fun unmuteAfterTts() {
 
         if (
-            _serviceStatus.value ==
-            ServiceState.PAUSED
+            _serviceStatus.value == ServiceState.PAUSED
         ) {
+            Log.d(
+                TAG,
+                "Service paused; detector remains stopped"
+            )
             return
         }
 
         if (
-            _serviceStatus.value ==
-            ServiceState.STOPPED
+            _serviceStatus.value == ServiceState.STOPPED
         ) {
+            Log.d(
+                TAG,
+                "Service stopped; detector remains stopped"
+            )
+            return
+        }
+
+        if (!hasMicrophonePermission()) {
+
+            Log.w(
+                TAG,
+                "Cannot unmute: microphone permission missing"
+            )
+
             return
         }
 
         detectorMutedForTts = false
 
+        if (wakeWordDetector == null) {
+
+            createWakeWordDetector()
+        }
+
         val detector =
             wakeWordDetector
 
+        if (detector == null) {
+
+            Log.e(
+                TAG,
+                "Cannot unmute: WakeWordDetector unavailable"
+            )
+
+            return
+        }
+
         try {
 
-            if (detector == null) {
+            /*
+             * Jika detector sebelumnya masih memiliki state
+             * passive-running, unmute akan menjadwalkan
+             * recognition kembali.
+             */
+            detector.unmuteAfterTts()
 
-                createWakeWordDetector()
-            }
+            detectorRunning = true
 
-            val currentDetector =
-                wakeWordDetector
-
-            if (currentDetector != null) {
-
-                /*
-                 * Detector sendiri akan melakukan
-                 * restart passive listening.
-                 */
-                currentDetector.unmuteAfterTts()
-
-                detectorRunning = true
-            }
-
-            Log.d(
+            Log.i(
                 TAG,
-                "WakeWordDetector unmuted"
+                "WakeWordDetector unmuted; passive mode resumed"
             )
 
         } catch (e: Exception) {
+
+            detectorRunning = false
 
             Log.e(
                 TAG,
                 "Failed to unmute WakeWordDetector",
                 e
             )
+
+            /*
+             * Fallback:
+             * mulai ulang detector sepenuhnya.
+             */
+            try {
+
+                detector.stop()
+
+                detectorRunning = false
+
+                if (
+                    _serviceStatus.value ==
+                    ServiceState.RUNNING &&
+                    !detectorMutedForTts
+                ) {
+
+                    detector.start { event ->
+
+                        if (
+                            detectorMutedForTts ||
+                            _serviceStatus.value !=
+                            ServiceState.RUNNING
+                        ) {
+                            return@start
+                        }
+
+                        if (
+                            event is WakeWordEvent.Detected
+                        ) {
+
+                            detectorMutedForTts = true
+                            detectorRunning = false
+
+                            try {
+                                detector.muteForTts()
+                            } catch (
+                                ignored: Exception
+                            ) {
+                            }
+                        }
+
+                        _wakeWordEvents.value =
+                            event
+                    }
+
+                    detectorRunning = true
+                }
+
+            } catch (restartError: Exception) {
+
+                detectorRunning = false
+
+                Log.e(
+                    TAG,
+                    "Fallback wake-word restart failed",
+                    restartError
+                )
+            }
         }
     }
 
     /*
      * =========================================================
-     * FOREGROUND NOTIFICATION
+     * FOREGROUND SERVICE
      * =========================================================
      */
 
@@ -759,10 +916,7 @@ class JarvisVoiceService : Service() {
 
         try {
 
-            if (
-                Build.VERSION.SDK_INT >=
-                Build.VERSION_CODES.Q
-            ) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
 
                 startForeground(
                     NOTIFICATION_ID,
@@ -787,6 +941,12 @@ class JarvisVoiceService : Service() {
             )
         }
     }
+
+    /*
+     * =========================================================
+     * NOTIFICATION UPDATE
+     * =========================================================
+     */
 
     private fun updateNotification(
         title: String,
@@ -832,7 +992,7 @@ class JarvisVoiceService : Service() {
 
                 flags =
                     Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP
+                            Intent.FLAG_ACTIVITY_CLEAR_TOP
             }
 
         val openAppPendingIntent =
@@ -841,7 +1001,7 @@ class JarvisVoiceService : Service() {
                 0,
                 openAppIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or
-                    PendingIntent.FLAG_IMMUTABLE
+                        PendingIntent.FLAG_IMMUTABLE
             )
 
         val pauseIntent =
@@ -849,7 +1009,9 @@ class JarvisVoiceService : Service() {
                 this,
                 JarvisVoiceService::class.java
             ).apply {
-                action = ACTION_PAUSE
+
+                action =
+                    ACTION_PAUSE
             }
 
         val pausePendingIntent =
@@ -858,7 +1020,7 @@ class JarvisVoiceService : Service() {
                 1,
                 pauseIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or
-                    PendingIntent.FLAG_IMMUTABLE
+                        PendingIntent.FLAG_IMMUTABLE
             )
 
         val resumeIntent =
@@ -866,7 +1028,9 @@ class JarvisVoiceService : Service() {
                 this,
                 JarvisVoiceService::class.java
             ).apply {
-                action = ACTION_RESUME
+
+                action =
+                    ACTION_RESUME
             }
 
         val resumePendingIntent =
@@ -875,7 +1039,7 @@ class JarvisVoiceService : Service() {
                 2,
                 resumeIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or
-                    PendingIntent.FLAG_IMMUTABLE
+                        PendingIntent.FLAG_IMMUTABLE
             )
 
         val stopIntent =
@@ -883,7 +1047,9 @@ class JarvisVoiceService : Service() {
                 this,
                 JarvisVoiceService::class.java
             ).apply {
-                action = ACTION_STOP
+
+                action =
+                    ACTION_STOP
             }
 
         val stopPendingIntent =
@@ -892,7 +1058,7 @@ class JarvisVoiceService : Service() {
                 3,
                 stopIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or
-                    PendingIntent.FLAG_IMMUTABLE
+                        PendingIntent.FLAG_IMMUTABLE
             )
 
         val builder =
@@ -900,46 +1066,52 @@ class JarvisVoiceService : Service() {
                 this,
                 CHANNEL_ID
             )
-                .setContentTitle(title)
-                .setContentText(content)
                 .setSmallIcon(
                     android.R.drawable.ic_btn_speak_now
                 )
+                .setContentTitle(title)
+                .setContentText(content)
                 .setContentIntent(
                     openAppPendingIntent
                 )
-                .setOngoing(true)
-                .setPriority(
-                    NotificationCompat.PRIORITY_LOW
+                .setOngoing(
+                    !isPaused
                 )
+                .setOnlyAlertOnce(true)
                 .setCategory(
                     NotificationCompat.CATEGORY_SERVICE
                 )
-                .setForegroundServiceBehavior(
-                    NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE
+                .setPriority(
+                    NotificationCompat.PRIORITY_LOW
                 )
 
         if (isPaused) {
 
             builder.addAction(
-                android.R.drawable.ic_media_play,
-                "Lanjut",
-                resumePendingIntent
+                NotificationCompat.Action(
+                    0,
+                    "Lanjutkan",
+                    resumePendingIntent
+                )
             )
 
         } else {
 
             builder.addAction(
-                android.R.drawable.ic_media_pause,
-                "Jeda",
-                pausePendingIntent
+                NotificationCompat.Action(
+                    0,
+                    "Jeda",
+                    pausePendingIntent
+                )
             )
         }
 
         builder.addAction(
-            android.R.drawable.ic_menu_close_clear_cancel,
-            "Hentikan",
-            stopPendingIntent
+            NotificationCompat.Action(
+                0,
+                "Matikan",
+                stopPendingIntent
+            )
         )
 
         return builder.build()
@@ -953,79 +1125,32 @@ class JarvisVoiceService : Service() {
 
     private fun createNotificationChannel() {
 
-        if (
-            Build.VERSION.SDK_INT >=
+        if (Build.VERSION.SDK_INT <
             Build.VERSION_CODES.O
         ) {
-
-            val channel =
-                NotificationChannel(
-                    CHANNEL_ID,
-                    "JARVIS Voice Assistant Service",
-                    NotificationManager.IMPORTANCE_LOW
-                ).apply {
-
-                    description =
-                        "Layanan wake word dan mikrofon JARVIS"
-
-                    setShowBadge(false)
-                }
-
-            val manager =
-                getSystemService(
-                    Context.NOTIFICATION_SERVICE
-                ) as NotificationManager
-
-            manager.createNotificationChannel(
-                channel
-            )
+            return
         }
-    }
 
-    /*
-     * =========================================================
-     * BINDER
-     * =========================================================
-     */
+        val manager =
+            getSystemService(
+                Context.NOTIFICATION_SERVICE
+            ) as NotificationManager
 
-    override fun onBind(
-        intent: Intent?
-    ): IBinder {
+        val channel =
+            NotificationChannel(
+                CHANNEL_ID,
+                "JARVIS Voice Assistant",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
 
-        return binder
-    }
+                description =
+                    "Status layanan voice assistant JARVIS"
 
-    /*
-     * =========================================================
-     * DESTROY
-     * =========================================================
-     */
+                setShowBadge(false)
+            }
 
-    override fun onDestroy() {
-
-        Log.d(
-            TAG,
-            "JarvisVoiceService destroying"
+        manager.createNotificationChannel(
+            channel
         )
-
-        detectorMutedForTts = true
-
-        stopWakeWordEngine()
-
-        try {
-
-            wakeWordDetector?.stop()
-
-        } catch (_: Exception) {
-        }
-
-        wakeWordDetector = null
-
-        detectorRunning = false
-
-        _serviceStatus.value =
-            ServiceState.STOPPED
-
-        super.onDestroy()
     }
 }
