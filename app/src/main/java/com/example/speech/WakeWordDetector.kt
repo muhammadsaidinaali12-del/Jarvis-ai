@@ -12,11 +12,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 sealed interface WakeWordEvent {
 
@@ -47,7 +46,7 @@ sealed interface WakeWordEvent {
  * Model:
  * assets/hey_jarvis_v0.1.onnx
  *
- * Preprocessor:
+ * Required preprocessing assets:
  * assets/melspectrogram.onnx
  * assets/embedding_model.onnx
  *
@@ -57,13 +56,23 @@ sealed interface WakeWordEvent {
  *      ↓
  * OpenWakeWord
  *      ↓
- * hey_jarvis_v0.1
+ * hey_jarvis_v0.1.onnx
  *      ↓
  * threshold
  *      ↓
  * WakeWordEvent.Detected
  *      ↓
  * SpeechManager mengambil alih microphone
+ *
+ * Catatan:
+ *
+ * Model yang kita gunakan adalah model "Hey JARVIS".
+ * Karena itu wake word yang dideteksi secara akustik
+ * adalah "Hey JARVIS", bukan sekadar kata "JARVIS".
+ *
+ * Tidak menggunakan SpeechRecognizer untuk wake word.
+ * SpeechRecognizer hanya boleh digunakan setelah
+ * wake word terdeteksi untuk mengambil command pengguna.
  */
 class WakeWordDetector(
     private val context: Context,
@@ -77,8 +86,15 @@ class WakeWordDetector(
         const val WAKE_WORD = "JARVIS"
 
         /**
-         * Threshold awal berdasarkan pengujian
-         * model hey_jarvis_v0.1.onnx di Colab.
+         * Threshold awal berdasarkan pengujian model
+         * hey_jarvis_v0.1.onnx di Google Colab.
+         *
+         * Pengujian:
+         *
+         * "Hey JARVIS"
+         * -> score maksimum sekitar 0.995
+         *
+         * Threshold 0.75 memberikan margin yang cukup.
          */
         const val DEFAULT_SENSITIVITY = 0.75f
 
@@ -88,30 +104,38 @@ class WakeWordDetector(
         private const val MODEL_NAME =
             "JARVIS"
 
+        /**
+         * Mencegah deteksi berulang terlalu cepat.
+         */
         private const val DETECTION_COOLDOWN_MS =
             2000L
     }
 
     /**
-     * Threshold yang dapat diubah.
+     * Threshold wake word.
      *
-     * Nilai lebih kecil:
-     * lebih sensitif tetapi berpotensi lebih banyak
-     * false positive.
+     * Semakin kecil:
+     * semakin sensitif.
      *
-     * Nilai lebih besar:
-     * lebih ketat tetapi membutuhkan ucapan
-     * yang lebih jelas.
+     * Semakin besar:
+     * semakin ketat.
      */
     var sensitivity: Float =
-        sensitivity.coerceIn(0.05f, 0.99f)
+        sensitivity.coerceIn(
+            0.05f,
+            0.99f
+        )
 
     private val applicationContext =
         context.applicationContext
 
+    /**
+     * Scope khusus untuk OpenWakeWord.
+     */
     private val scope =
         CoroutineScope(
-            Dispatchers.Default + SupervisorJob()
+            Dispatchers.Default +
+                    SupervisorJob()
         )
 
     private var engine:
@@ -120,23 +144,28 @@ class WakeWordDetector(
     private var detectionJob:
             Job? = null
 
-    private var scoreJob:
-            Job? = null
-
     private var listener:
             ((WakeWordEvent) -> Unit)? = null
 
     @Volatile
-    private var isPassiveRunning = false
+    private var isPassiveRunning =
+        false
 
     @Volatile
-    private var isPaused = false
+    private var isPaused =
+        false
 
     @Volatile
-    private var isMutedDuringTts = false
+    private var isMutedDuringTts =
+        false
 
+    /**
+     * Mencegah satu wake word menghasilkan
+     * beberapa event.
+     */
     @Volatile
-    private var detectionAlreadySent = false
+    private var detectionAlreadySent =
+        false
 
     private val _isListening =
         MutableStateFlow(false)
@@ -148,7 +177,8 @@ class WakeWordDetector(
     /**
      * Membuat OpenWakeWord engine.
      */
-    private fun createEngine(): WakeWordEngine {
+    private fun createEngine():
+            WakeWordEngine {
 
         val model =
             WakeWordModel(
@@ -169,7 +199,7 @@ class WakeWordDetector(
     }
 
     /**
-     * Mulai passive wake-word detection.
+     * Memulai passive wake-word detection.
      */
     fun start(
         onEvent: (WakeWordEvent) -> Unit
@@ -185,6 +215,9 @@ class WakeWordDetector(
         startInternal()
     }
 
+    /**
+     * Memulai engine.
+     */
     private fun startInternal() {
 
         if (!isPassiveRunning) {
@@ -199,6 +232,9 @@ class WakeWordDetector(
             return
         }
 
+        /**
+         * Pastikan permission microphone tersedia.
+         */
         if (
             ContextCompat.checkSelfPermission(
                 applicationContext,
@@ -221,52 +257,35 @@ class WakeWordDetector(
 
         try {
 
+            /**
+             * Bersihkan engine lama terlebih dahulu.
+             */
             stopEngineOnly()
 
             detectionAlreadySent = false
 
+            /**
+             * Buat engine baru.
+             */
             val newEngine =
                 createEngine()
 
             engine = newEngine
 
-            /*
-             * Collector detection harus dibuat
-             * SEBELUM engine.start().
+            /**
+             * Collector HARUS dibuat sebelum
+             * engine.start().
              */
             detectionJob =
                 scope.launch {
 
                     newEngine.detections
-                        .catch { error ->
-
-                            Log.e(
-                                TAG,
-                                "Wake-word detection flow error",
-                                error
-                            )
-
-                            if (
-                                isPassiveRunning &&
-                                !isPaused &&
-                                !isMutedDuringTts
-                            ) {
-
-                                listener?.invoke(
-                                    WakeWordEvent.Error(
-                                        message =
-                                            "Wake-word engine error: ${
-                                                error.message
-                                                    ?: "unknown error"
-                                            }",
-                                        isRecoverable = true
-                                    )
-                                )
-                            }
-
-                        }
                         .collect { detection ->
 
+                            /**
+                             * Abaikan event jika detector
+                             * sedang tidak aktif.
+                             */
                             if (
                                 !isPassiveRunning ||
                                 isPaused ||
@@ -276,23 +295,58 @@ class WakeWordDetector(
                                 return@collect
                             }
 
+                            /**
+                             * Pastikan hanya satu event
+                             * dikirim untuk satu deteksi.
+                             */
                             detectionAlreadySent = true
+
+                            val score =
+                                detection.score
+                                    .coerceIn(
+                                        0f,
+                                        1f
+                                    )
 
                             Log.i(
                                 TAG,
                                 "JARVIS DETECTED: " +
-                                        "score=${detection.score}"
+                                        "model=${detection.model.name}, " +
+                                        "score=$score"
                             )
 
-                            /*
-                             * Jangan kirim inline command.
+                            /**
+                             * Score model dapat digunakan
+                             * sebagai indikator level aktivitas
+                             * pada UI.
                              *
-                             * OpenWakeWord hanya bertugas
-                             * mendeteksi wake word.
+                             * Ini BUKAN scores flow.
+                             * Kita mengambil score langsung
+                             * dari WakeWordDetection.
+                             */
+                            listener?.invoke(
+                                WakeWordEvent.AudioLevel(
+                                    score
+                                )
+                            )
+
+                            /**
+                             * Hentikan engine segera setelah
+                             * wake word berhasil dideteksi.
                              *
-                             * Setelah ini SpeechManager
-                             * mengambil alih microphone
-                             * untuk mendengarkan command.
+                             * Ini penting agar microphone dapat
+                             * diberikan kepada SpeechManager.
+                             */
+                            stopEngineOnly()
+
+                            /**
+                             * OpenWakeWord hanya mendeteksi
+                             * wake word.
+                             *
+                             * Command akan ditangani oleh
+                             * SpeechManager setelah event ini.
+                             *
+                             * inlineCommand sengaja null.
                              */
                             listener?.invoke(
                                 WakeWordEvent.Detected(
@@ -302,54 +356,9 @@ class WakeWordDetector(
                         }
                 }
 
-            /*
-             * Score digunakan untuk visualisasi
-             * audio level/status pada UI.
+            /**
+             * Mulai microphone + inference.
              */
-            scoreJob =
-                scope.launch {
-
-                    newEngine.scores
-                        .catch { error ->
-
-                            Log.e(
-                                TAG,
-                                "Wake-word score flow error",
-                                error
-                            )
-
-                        }
-                        .collect { score ->
-
-                            if (
-                                !isPassiveRunning ||
-                                isPaused ||
-                                isMutedDuringTts
-                            ) {
-                                return@collect
-                            }
-
-                            /*
-                             * Score bukan RMS audio sebenarnya,
-                             * tetapi sangat berguna sebagai
-                             * indikator aktivitas/confidence
-                             * model.
-                             */
-                            val level =
-                                score.score
-                                    .coerceIn(
-                                        0f,
-                                        1f
-                                    )
-
-                            listener?.invoke(
-                                WakeWordEvent.AudioLevel(
-                                    level
-                                )
-                            )
-                        }
-                }
-
             newEngine.start()
 
             _isListening.value = true
@@ -363,7 +372,7 @@ class WakeWordDetector(
             Log.i(
                 TAG,
                 "OpenWakeWord started. " +
-                        "Model=$MODEL_FILE " +
+                        "model=$MODEL_FILE, " +
                         "threshold=$sensitivity"
             )
 
@@ -383,7 +392,8 @@ class WakeWordDetector(
                 WakeWordEvent.Error(
                     message =
                         "Gagal memulai wake-word engine: ${
-                            e.message ?: "unknown error"
+                            e.message
+                                ?: "unknown error"
                         }",
                     isRecoverable = true
                 )
@@ -418,7 +428,7 @@ class WakeWordDetector(
 
     /**
      * Aktifkan kembali wake-word detection
-     * setelah TTS / active listening selesai.
+     * setelah TTS selesai.
      */
     fun unmuteAfterTts() {
 
@@ -436,7 +446,7 @@ class WakeWordDetector(
 
         Log.d(
             TAG,
-            "OpenWakeWord resumed"
+            "OpenWakeWord resumed after TTS"
         )
     }
 
@@ -488,7 +498,7 @@ class WakeWordDetector(
     }
 
     /**
-     * Hentikan detector sepenuhnya.
+     * Menghentikan detector sepenuhnya.
      */
     fun stop() {
 
@@ -511,16 +521,14 @@ class WakeWordDetector(
     }
 
     /**
-     * Hanya menghentikan engine tanpa
-     * mengubah status passive detector.
+     * Hanya menghentikan engine.
+     *
+     * Tidak mengubah status passive detector.
      */
     private fun stopEngineOnly() {
 
         detectionJob?.cancel()
         detectionJob = null
-
-        scoreJob?.cancel()
-        scoreJob = null
 
         try {
 
