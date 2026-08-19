@@ -7,13 +7,13 @@ import android.net.Uri
 import android.provider.AlarmClock
 import android.provider.MediaStore
 import android.provider.Settings
-import android.util.Log
+import java.net.URLEncoder
 import java.util.Locale
 
-data class JarvisActionResult(
+data class ActionResult(
     val success: Boolean,
     val spokenText: String,
-    val displayText: String = spokenText,
+    val displayText: String,
     val actionTitle: String? = null
 )
 
@@ -21,255 +21,377 @@ class JarvisActionExecutor(
     private val context: Context
 ) {
 
-    private val tag = "JarvisActionExecutor"
     private val packageManager: PackageManager =
         context.packageManager
 
-    fun execute(
-        command: String
-    ): JarvisActionResult? {
+    /**
+     * Menjalankan perintah Android.
+     *
+     * Return null berarti:
+     * "Ini bukan perintah Android yang saya kenali."
+     *
+     * Dengan begitu JarvisBrain dapat meneruskannya ke Gemini.
+     */
+    fun execute(command: String): ActionResult? {
 
-        val raw = command.trim()
+        val original = command.trim()
 
-        if (raw.isBlank()) {
+        if (original.isBlank()) {
             return null
         }
 
         val lower =
-            raw.lowercase(Locale.forLanguageTag("id-ID"))
+            original.lowercase(Locale.forLanguageTag("id-ID"))
 
-        return try {
+        // -----------------------------------------------------
+        // APLIKASI
+        // -----------------------------------------------------
 
-            // =====================================================
-            // OPEN APP
-            // =====================================================
+        extractOpenApplicationName(lower)?.let { appName ->
 
-            extractOpenApplication(lower)?.let { appName ->
+            val result =
+                launchApplicationByName(appName)
 
-                val result =
-                    openApplication(appName)
-
-                if (result != null) {
-                    return result
-                }
-
-                openKnownWebFallback(appName)?.let {
-                    return it
-                }
+            if (result != null) {
+                return result
             }
 
-            // =====================================================
-            // OPEN CAMERA
-            // =====================================================
+            /*
+             * Untuk aplikasi yang tidak terpasang:
+             * khusus layanan web populer, buka website.
+             */
+            val webUrl =
+                webFallbackForApplication(appName)
 
-            if (
-                lower == "kamera" ||
-                lower.contains("buka kamera") ||
-                lower.contains("buka camera")
-            ) {
+            if (webUrl != null) {
 
-                val intent =
-                    Intent(
-                        MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA
-                    ).apply {
-                        flags =
-                            Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
+                val opened =
+                    openUrl(webUrl)
 
-                if (start(intent)) {
-                    return success(
-                        "Membuka kamera, Tuan.",
-                        "Kamera",
-                        "Kamera perangkat dibuka."
+                if (opened) {
+
+                    val speech =
+                        "Aplikasi $appName tidak ditemukan. Saya membuka versi webnya, Tuan."
+
+                    return ActionResult(
+                        success = true,
+                        spokenText = speech,
+                        displayText = speech,
+                        actionTitle = "Web $appName"
                     )
                 }
             }
 
-            // =====================================================
-            // CALCULATOR
-            // =====================================================
+            return ActionResult(
+                success = false,
+                spokenText = "Saya tidak menemukan aplikasi $appName di perangkat ini, Tuan.",
+                displayText = "Aplikasi tidak ditemukan: $appName",
+                actionTitle = "Aplikasi tidak ditemukan"
+            )
+        }
 
-            if (
-                lower.contains("buka kalkulator") ||
-                lower == "kalkulator" ||
-                lower.contains("buka calculator")
-            ) {
+        // -----------------------------------------------------
+        // KAMERA
+        // -----------------------------------------------------
+
+        if (
+            containsAny(
+                lower,
+                "buka kamera",
+                "buka camera",
+                "jalankan kamera",
+                "jalankan camera"
+            )
+        ) {
+
+            val intent =
+                Intent(
+                    MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA
+                ).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+
+            if (startActivity(intent)) {
+
+                return success(
+                    "Membuka kamera, Tuan.",
+                    "Kamera",
+                    "Kamera perangkat dibuka."
+                )
+            }
+
+            return failure(
+                "Saya tidak dapat membuka kamera, Tuan.",
+                "Kamera"
+            )
+        }
+
+        // -----------------------------------------------------
+        // KALKULATOR
+        // -----------------------------------------------------
+
+        if (
+            containsAny(
+                lower,
+                "buka kalkulator",
+                "buka calculator",
+                "jalankan kalkulator",
+                "jalankan calculator"
+            )
+        ) {
+
+            val intent =
+                Intent(Intent.ACTION_MAIN).apply {
+
+                    addCategory(
+                        Intent.CATEGORY_APP_CALCULATOR
+                    )
+
+                    addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK
+                    )
+                }
+
+            if (startActivity(intent)) {
+
+                return success(
+                    "Membuka kalkulator, Tuan.",
+                    "Kalkulator",
+                    "Kalkulator dibuka."
+                )
+            }
+
+            return failure(
+                "Kalkulator tidak tersedia di perangkat ini, Tuan.",
+                "Kalkulator"
+            )
+        }
+
+        // -----------------------------------------------------
+        // PENGATURAN
+        // -----------------------------------------------------
+
+        if (
+            containsAny(
+                lower,
+                "buka pengaturan",
+                "buka settings",
+                "buka setting",
+                "jalankan pengaturan",
+                "jalankan settings"
+            )
+        ) {
+
+            val intent =
+                Intent(Settings.ACTION_SETTINGS).apply {
+                    addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK
+                    )
+                }
+
+            if (startActivity(intent)) {
+
+                return success(
+                    "Membuka pengaturan perangkat, Tuan.",
+                    "Pengaturan",
+                    "Pengaturan perangkat dibuka."
+                )
+            }
+
+            return failure(
+                "Saya tidak dapat membuka pengaturan, Tuan.",
+                "Pengaturan"
+            )
+        }
+
+        // -----------------------------------------------------
+        // WI-FI
+        // -----------------------------------------------------
+
+        if (
+            containsAny(
+                lower,
+                "buka wifi",
+                "buka wi-fi",
+                "buka jaringan wifi",
+                "pengaturan wifi",
+                "pengaturan wi-fi"
+            )
+        ) {
+
+            val intent =
+                Intent(Settings.ACTION_WIFI_SETTINGS).apply {
+                    addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK
+                    )
+                }
+
+            if (startActivity(intent)) {
+
+                return success(
+                    "Membuka pengaturan Wi-Fi, Tuan.",
+                    "Pengaturan Wi-Fi",
+                    "Pengaturan Wi-Fi dibuka."
+                )
+            }
+        }
+
+        // -----------------------------------------------------
+        // BLUETOOTH
+        // -----------------------------------------------------
+
+        if (
+            containsAny(
+                lower,
+                "buka bluetooth",
+                "pengaturan bluetooth",
+                "buka pengaturan bluetooth"
+            )
+        ) {
+
+            val intent =
+                Intent(
+                    Settings.ACTION_BLUETOOTH_SETTINGS
+                ).apply {
+                    addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK
+                    )
+                }
+
+            if (startActivity(intent)) {
+
+                return success(
+                    "Membuka pengaturan Bluetooth, Tuan.",
+                    "Bluetooth",
+                    "Pengaturan Bluetooth dibuka."
+                )
+            }
+        }
+
+        // -----------------------------------------------------
+        // ALARM
+        // -----------------------------------------------------
+
+        if (
+            containsAny(
+                lower,
+                "buka alarm",
+                "lihat alarm",
+                "buka jam",
+                "buka clock"
+            )
+        ) {
+
+            val intent =
+                Intent(
+                    AlarmClock.ACTION_SHOW_ALARMS
+                ).apply {
+                    addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK
+                    )
+                }
+
+            if (startActivity(intent)) {
+
+                return success(
+                    "Membuka alarm, Tuan.",
+                    "Alarm",
+                    "Daftar alarm dibuka."
+                )
+            }
+        }
+
+        // -----------------------------------------------------
+        // TELEPON
+        // -----------------------------------------------------
+
+        if (
+            lower.startsWith("telepon ") ||
+            lower.startsWith("telpon ") ||
+            lower.startsWith("panggil ")
+        ) {
+
+            val number =
+                extractAfterPrefix(
+                    lower,
+                    listOf(
+                        "telepon ",
+                        "telpon ",
+                        "panggil "
+                    )
+                )
+
+            if (number.isNotBlank()) {
+
+                val cleanedNumber =
+                    number
+                        .replace(" ", "")
+                        .replace("-", "")
 
                 val intent =
-                    Intent(Intent.ACTION_MAIN).apply {
-
-                        addCategory(
-                            Intent.CATEGORY_APP_CALCULATOR
+                    Intent(
+                        Intent.ACTION_DIAL,
+                        Uri.parse(
+                            "tel:$cleanedNumber"
                         )
-
-                        flags =
-                            Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-
-                if (start(intent)) {
-                    return success(
-                        "Membuka kalkulator, Tuan.",
-                        "Kalkulator",
-                        "Kalkulator dibuka."
-                    )
-                }
-            }
-
-            // =====================================================
-            // SETTINGS
-            // =====================================================
-
-            if (
-                lower == "pengaturan" ||
-                lower == "setting" ||
-                lower == "settings" ||
-                lower.contains("buka pengaturan")
-            ) {
-
-                val intent =
-                    Intent(
-                        Settings.ACTION_SETTINGS
                     ).apply {
-                        flags =
+                        addFlags(
                             Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-
-                if (start(intent)) {
-                    return success(
-                        "Membuka pengaturan perangkat, Tuan.",
-                        "Pengaturan",
-                        "Pengaturan Android dibuka."
-                    )
-                }
-            }
-
-            // =====================================================
-            // WIFI SETTINGS
-            // =====================================================
-
-            if (
-                lower.contains("buka wifi") ||
-                lower.contains("pengaturan wifi") ||
-                lower.contains("setting wifi")
-            ) {
-
-                val intent =
-                    Intent(
-                        Settings.ACTION_WIFI_SETTINGS
-                    ).apply {
-                        flags =
-                            Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-
-                if (start(intent)) {
-                    return success(
-                        "Membuka pengaturan Wi-Fi, Tuan.",
-                        "Wi-Fi",
-                        "Pengaturan Wi-Fi dibuka."
-                    )
-                }
-            }
-
-            // =====================================================
-            // BLUETOOTH SETTINGS
-            // =====================================================
-
-            if (
-                lower.contains("buka bluetooth") ||
-                lower.contains("pengaturan bluetooth") ||
-                lower.contains("setting bluetooth")
-            ) {
-
-                val intent =
-                    Intent(
-                        Settings.ACTION_BLUETOOTH_SETTINGS
-                    ).apply {
-                        flags =
-                            Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-
-                if (start(intent)) {
-                    return success(
-                        "Membuka pengaturan Bluetooth, Tuan.",
-                        "Bluetooth",
-                        "Pengaturan Bluetooth dibuka."
-                    )
-                }
-            }
-
-            // =====================================================
-            // ALARM
-            // =====================================================
-
-            if (
-                lower.contains("buka alarm") ||
-                lower.contains("buka jam") ||
-                lower == "alarm"
-            ) {
-
-                val intent =
-                    Intent(
-                        AlarmClock.ACTION_SHOW_ALARMS
-                    ).apply {
-                        flags =
-                            Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-
-                if (start(intent)) {
-                    return success(
-                        "Membuka alarm, Tuan.",
-                        "Alarm",
-                        "Aplikasi alarm dibuka."
-                    )
-                }
-            }
-
-            // =====================================================
-            // PHONE / DIAL
-            // =====================================================
-
-            extractPhoneNumber(raw)?.let { number ->
-
-                if (
-                    lower.contains("telepon") ||
-                    lower.contains("telpon") ||
-                    lower.contains("hubungi") ||
-                    lower.contains("panggil")
-                ) {
-
-                    val intent =
-                        Intent(
-                            Intent.ACTION_DIAL,
-                            Uri.parse(
-                                "tel:${Uri.encode(number)}"
-                            )
-                        ).apply {
-                            flags =
-                                Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-
-                    if (start(intent)) {
-                        return success(
-                            "Membuka panggilan untuk $number, Tuan.",
-                            "Panggilan",
-                            "Dialer dibuka untuk $number."
                         )
                     }
+
+                if (startActivity(intent)) {
+
+                    return success(
+                        "Membuka telepon untuk $number, Tuan.",
+                        "Telepon",
+                        "Dialer dibuka untuk $number."
+                    )
                 }
             }
+        }
 
-            // =====================================================
-            // SMS
-            //
-            // JARVIS menyiapkan SMS, tetapi tidak mengirim
-            // diam-diam tanpa konfirmasi pengguna.
-            // =====================================================
+        // -----------------------------------------------------
+        // SMS
+        //
+        // Tidak mengirim otomatis.
+        // Android membuka composer agar pengguna
+        // dapat memeriksa lalu menekan Kirim.
+        // -----------------------------------------------------
 
-            extractSmsCommand(raw)?.let { sms ->
+        if (
+            lower.startsWith("kirim sms ") ||
+            lower.startsWith("kirim pesan ")
+        ) {
+
+            val payload =
+                when {
+                    lower.startsWith("kirim sms ") ->
+                        original.substring(
+                            "kirim sms ".length
+                        ).trim()
+
+                    else ->
+                        original.substring(
+                            "kirim pesan ".length
+                        ).trim()
+
+                    }
+
+            val parsed =
+                parseMessageCommand(payload)
+
+            if (parsed != null) {
+
+                val number =
+                    parsed.first
+
+                val message =
+                    parsed.second
 
                 val uri =
                     Uri.parse(
-                        "smsto:${Uri.encode(sms.number)}"
+                        "smsto:${Uri.encode(number)}"
                     )
 
                 val intent =
@@ -280,153 +402,177 @@ class JarvisActionExecutor(
 
                         putExtra(
                             "sms_body",
-                            sms.message
+                            message
                         )
 
-                        flags =
+                        addFlags(
                             Intent.FLAG_ACTIVITY_NEW_TASK
+                        )
                     }
 
-                if (start(intent)) {
+                if (startActivity(intent)) {
 
                     return success(
-                        "Pesan sudah saya siapkan untuk ${sms.number}. Silakan tekan kirim, Tuan.",
+                        "Saya sudah menyiapkan pesan untuk $number. Silakan tekan Kirim, Tuan.",
                         "SMS",
-                        "SMS disiapkan untuk ${sms.number}."
+                        "Composer SMS dibuka."
                     )
                 }
             }
+        }
 
-            // =====================================================
-            // WEB SEARCH
-            // =====================================================
+        // -----------------------------------------------------
+        // WHATSAPP
+        // -----------------------------------------------------
 
-            extractSearchQuery(raw)?.let { search ->
+        if (
+            lower.startsWith("kirim whatsapp ") ||
+            lower.startsWith("kirim wa ")
+        ) {
 
-                val url =
-                    "https://www.google.com/search?q=" +
-                            Uri.encode(search)
+            val prefix =
+                if (
+                    lower.startsWith("kirim whatsapp ")
+                ) {
+                    "kirim whatsapp "
+                } else {
+                    "kirim wa "
+                }
+
+            val payload =
+                original.substring(
+                    prefix.length
+                ).trim()
+
+            val parsed =
+                parseMessageCommand(payload)
+
+            if (parsed != null) {
+
+                val number =
+                    parsed.first
+
+                val message =
+                    parsed.second
+
+                val encodedMessage =
+                    URLEncoder.encode(
+                        message,
+                        "UTF-8"
+                    )
+
+                val uri =
+                    Uri.parse(
+                        "https://wa.me/${number.replace("+", "")}" +
+                            "?text=$encodedMessage"
+                    )
 
                 val intent =
                     Intent(
                         Intent.ACTION_VIEW,
-                        Uri.parse(url)
+                        uri
                     ).apply {
-                        flags =
+                        addFlags(
                             Intent.FLAG_ACTIVITY_NEW_TASK
+                        )
                     }
 
-                if (start(intent)) {
+                if (startActivity(intent)) {
+
                     return success(
-                        "Mencari $search di Google, Tuan.",
-                        "Pencarian",
-                        "Google dibuka untuk pencarian: $search"
+                        "Saya membuka WhatsApp dengan pesan yang sudah disiapkan, Tuan.",
+                        "WhatsApp",
+                        "WhatsApp dibuka."
                     )
                 }
             }
-
-            // =====================================================
-            // OPEN URL
-            // =====================================================
-
-            if (
-                lower.startsWith("buka situs ") ||
-                lower.startsWith("buka website ") ||
-                lower.startsWith("buka web ")
-            ) {
-
-                val site =
-                    raw.substringAfter(" ", "")
-                        .substringAfter(" ", "")
-                        .trim()
-
-                if (site.isNotBlank()) {
-
-                    val normalizedUrl =
-                        if (
-                            site.startsWith("http://") ||
-                            site.startsWith("https://")
-                        ) {
-                            site
-                        } else {
-                            "https://$site"
-                        }
-
-                    val intent =
-                        Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse(normalizedUrl)
-                        ).apply {
-                            flags =
-                                Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-
-                    if (start(intent)) {
-                        return success(
-                            "Membuka situs $site, Tuan.",
-                            "Website",
-                            normalizedUrl
-                        )
-                    }
-                }
-            }
-
-        } catch (e: Exception) {
-
-            Log.e(
-                tag,
-                "Gagal menjalankan command: $raw",
-                e
-            )
         }
 
-        return null
-    }
+        // -----------------------------------------------------
+        // PENCARIAN GOOGLE
+        // -----------------------------------------------------
 
-    // =========================================================
-    // APPLICATION NAME
-    // =========================================================
+        if (
+            lower.startsWith("cari ") ||
+            lower.startsWith("carikan ") ||
+            lower.startsWith("search ")
+        ) {
 
-    private fun extractOpenApplication(
-        command: String
-    ): String? {
+            val searchQuery =
+                extractAfterPrefix(
+                    original,
+                    listOf(
+                        "cari ",
+                        "carikan ",
+                        "search "
+                    )
+                )
 
-        val patterns =
-            listOf(
-                Regex("^buka aplikasi\\s+(.+)$"),
-                Regex("^bukakan aplikasi\\s+(.+)$"),
-                Regex("^tolong buka aplikasi\\s+(.+)$"),
-                Regex("^buka app\\s+(.+)$"),
-                Regex("^buka\\s+(.+)$"),
-                Regex("^bukakan\\s+(.+)$"),
-                Regex("^tolong buka\\s+(.+)$"),
-                Regex("^jalankan aplikasi\\s+(.+)$"),
-                Regex("^jalankan\\s+(.+)$"),
-                Regex("^open\\s+(.+)$"),
-                Regex("^launch\\s+(.+)$")
-            )
+            if (searchQuery.isNotBlank()) {
 
-        for (pattern in patterns) {
+                val encoded =
+                    URLEncoder.encode(
+                        searchQuery,
+                        "UTF-8"
+                    )
 
-            val match =
-                pattern.find(command)
+                val url =
+                    "https://www.google.com/search?q=$encoded"
 
-            if (match != null) {
+                if (openUrl(url)) {
 
-                val name =
-                    match.groupValues
-                        .getOrNull(1)
-                        ?.trim()
-                        ?: ""
+                    return success(
+                        "Mencari $searchQuery, Tuan.",
+                        "Pencarian Google",
+                        "Google: $searchQuery"
+                    )
+                }
+            }
+        }
 
-                if (
-                    name.isNotBlank() &&
-                    name != "kamera" &&
-                    name != "kalkulator" &&
-                    name != "alarm" &&
-                    name != "pengaturan"
-                ) {
-                    return normalizeAppName(name)
+        // -----------------------------------------------------
+        // YOUTUBE SEARCH
+        // -----------------------------------------------------
+
+        if (
+            lower.startsWith("cari di youtube ") ||
+            lower.startsWith("cari youtube ")
+        ) {
+
+            val searchQuery =
+                when {
+
+                    lower.startsWith(
+                        "cari di youtube "
+                    ) ->
+                        original.substring(
+                            "cari di youtube ".length
+                        ).trim()
+
+                    else ->
+                        original.substring(
+                            "cari youtube ".length
+                        ).trim()
+                }
+
+            if (searchQuery.isNotBlank()) {
+
+                val encoded =
+                    URLEncoder.encode(
+                        searchQuery,
+                        "UTF-8"
+                    )
+
+                val url =
+                    "https://www.youtube.com/results?search_query=$encoded"
+
+                if (openUrl(url)) {
+
+                    return success(
+                        "Mencari $searchQuery di YouTube, Tuan.",
+                        "YouTube Search",
+                        "YouTube: $searchQuery"
+                    )
                 }
             }
         }
@@ -435,12 +581,12 @@ class JarvisActionExecutor(
     }
 
     // =========================================================
-    // FIND APPLICATION
+    // APPLICATION LAUNCHER
     // =========================================================
 
-    private fun openApplication(
+    private fun launchApplicationByName(
         requestedName: String
-    ): JarvisActionResult? {
+    ): ActionResult? {
 
         val requested =
             normalizeAppName(requestedName)
@@ -457,259 +603,396 @@ class JarvisActionExecutor(
             }
 
         val activities =
-            try {
+            packageManager.queryIntentActivities(
+                launcherIntent,
+                PackageManager.MATCH_ALL
+            )
 
-                packageManager.queryIntentActivities(
-                    launcherIntent,
-                    PackageManager.MATCH_ALL
-                )
-
-            } catch (e: Exception) {
-
-                Log.e(
-                    tag,
-                    "Tidak dapat membaca daftar aplikasi",
-                    e
-                )
-
-                emptyList()
-            }
-
-        var bestPackage: String? = null
-        var bestLabel: String? = null
-        var bestScore = 0
-
-        for (info in activities) {
-
-            val appInfo =
-                info.activityInfo.applicationInfo
-
-            val label =
-                try {
-                    appInfo
-                        .loadLabel(packageManager)
-                        .toString()
-                } catch (
-                    _: Exception
-                ) {
-                    ""
-                }
-
-            val labelNormalized =
-                normalizeAppName(label)
-
-            val packageName =
-                appInfo.packageName
-                    .lowercase(Locale.ROOT)
-
-            val score =
-                applicationScore(
-                    requested,
-                    labelNormalized,
-                    packageName
-                )
-
-            if (score > bestScore) {
-
-                bestScore = score
-                bestPackage = appInfo.packageName
-                bestLabel = label
-            }
-        }
-
-        if (
-            bestPackage.isNullOrBlank() ||
-            bestLabel.isNullOrBlank() ||
-            bestScore < 50
-        ) {
+        if (activities.isEmpty()) {
             return null
         }
 
-        val launchIntent =
-            packageManager
-                .getLaunchIntentForPackage(
-                    bestPackage!!
-                )
-                ?: return null
+        /*
+         * Exact match terlebih dahulu.
+         */
 
-        launchIntent.flags =
-            Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+        val exact =
+            activities.firstOrNull { info ->
 
-        if (!start(launchIntent)) {
+                val label =
+                    info.loadLabel(
+                        packageManager
+                    )
+                        ?.toString()
+                        ?.let {
+                            normalizeAppName(it)
+                        }
+                        ?: ""
+
+                label == requested
+            }
+
+        val selected =
+            exact
+                ?: activities.firstOrNull { info ->
+
+                    val label =
+                        info.loadLabel(
+                            packageManager
+                        )
+                            ?.toString()
+                            ?.let {
+                                normalizeAppName(it)
+                            }
+                            ?: ""
+
+                    label.contains(requested) ||
+                        requested.contains(label)
+                }
+
+        if (selected == null) {
             return null
         }
 
-        return success(
-            "Membuka $bestLabel, Tuan.",
-            "Membuka aplikasi: $bestLabel",
-            "Aplikasi $bestLabel berhasil dibuka."
-        )
-    }
+        val packageName =
+            selected.activityInfo.packageName
 
-    private fun applicationScore(
-        requested: String,
-        label: String,
-        packageName: String
-    ): Int {
+        val activityName =
+            selected.activityInfo.name
 
-        if (label == requested) {
-            return 100
-        }
+        val intent =
+            Intent(Intent.ACTION_MAIN).apply {
 
-        if (label.startsWith(requested)) {
-            return 90
-        }
+                addCategory(
+                    Intent.CATEGORY_LAUNCHER
+                )
 
-        if (label.contains(requested)) {
-            return 80
-        }
+                component =
+                    android.content.ComponentName(
+                        packageName,
+                        activityName
+                    )
 
-        if (packageName == requested) {
-            return 85
-        }
-
-        if (packageName.contains(requested)) {
-            return 70
-        }
-
-        val words =
-            requested
-                .split(Regex("\\s+"))
-                .filter {
-                    it.length >= 2
-                }
-
-        if (
-            words.isNotEmpty() &&
-            words.all {
-                label.contains(it)
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK
+                )
             }
-        ) {
-            return 65
+
+        return if (startActivity(intent)) {
+
+            val actualName =
+                selected.loadLabel(
+                    packageManager
+                )
+                    ?.toString()
+                    ?: requestedName
+
+            success(
+                "Membuka $actualName, Tuan.",
+                actualName,
+                "$actualName dibuka."
+            )
+
+        } else {
+
+            failure(
+                "Saya tidak dapat membuka $requestedName, Tuan.",
+                requestedName
+            )
+        }
+    }
+
+    // =========================================================
+    // APPLICATION NAME EXTRACTION
+    // =========================================================
+
+    private fun extractOpenApplicationName(
+        lower: String
+    ): String? {
+
+        val prefixes =
+            listOf(
+                "buka ",
+                "bukakan ",
+                "jalankan ",
+                "jalankan aplikasi ",
+                "buka aplikasi ",
+                "open ",
+                "launch "
+            )
+
+        for (prefix in prefixes) {
+
+            if (
+                lower.startsWith(prefix) &&
+                lower.length > prefix.length
+            ) {
+
+                val result =
+                    lower.substring(
+                        prefix.length
+                    ).trim()
+
+                if (result.isNotBlank()) {
+                    return result
+                }
+            }
         }
 
-        return 0
+        return null
     }
+
+    // =========================================================
+    // APPLICATION ALIASES
+    // =========================================================
 
     private fun normalizeAppName(
-        name: String
+        value: String
     ): String {
 
+        var name =
+            value
+                .lowercase(
+                    Locale.forLanguageTag("id-ID")
+                )
+                .trim()
+
+        val aliases =
+            mapOf(
+                "yt" to "youtube",
+                "youtube app" to "youtube",
+                "ig" to "instagram",
+                "insta" to "instagram",
+                "wa" to "whatsapp",
+                "whats app" to "whatsapp",
+                "fb" to "facebook",
+                "telegram messenger" to "telegram",
+                "chrome browser" to "chrome",
+                "google chrome" to "chrome",
+                "spotify music" to "spotify",
+                "tiktok app" to "tiktok"
+            )
+
+        name =
+            aliases[name] ?: name
+
         return name
-            .lowercase(Locale.ROOT)
-            .trim()
-            .removePrefix("aplikasi ")
-            .removePrefix("app ")
-            .removeSuffix(" aplikasi")
-            .trim()
-            .replace("youtube", "youtube")
-            .replace("instagram", "instagram")
-            .replace("whatsapp", "whatsapp")
+    }
+
+    private fun webFallbackForApplication(
+        appName: String
+    ): String? {
+
+        return when (
+            normalizeAppName(appName)
+        ) {
+
+            "youtube" ->
+                "https://www.youtube.com"
+
+            "instagram" ->
+                "https://www.instagram.com"
+
+            "facebook" ->
+                "https://www.facebook.com"
+
+            "tiktok" ->
+                "https://www.tiktok.com"
+
+            "telegram" ->
+                "https://web.telegram.org"
+
+            "spotify" ->
+                "https://open.spotify.com"
+
+            else ->
+                null
+        }
     }
 
     // =========================================================
-    // KNOWN WEB FALLBACK
+    // MESSAGE PARSER
     // =========================================================
 
-    private fun openKnownWebFallback(
-        appName: String
-    ): JarvisActionResult? {
+    private fun parseMessageCommand(
+        payload: String
+    ): Pair<String, String>? {
 
-        val url =
-            when {
+        /*
+         * Format yang didukung:
+         *
+         * kirim pesan 08123456789 halo
+         *
+         * atau:
+         *
+         * kirim pesan 08123456789|halo
+         */
 
-                appName.contains("youtube") ->
-                    "https://www.youtube.com"
-
-                appName.contains("instagram") ->
-                    "https://www.instagram.com"
-
-                appName.contains("facebook") ->
-                    "https://www.facebook.com"
-
-                appName.contains("tiktok") ->
-                    "https://www.tiktok.com"
-
-                appName.contains("telegram") ->
-                    "https://web.telegram.org"
-
-                appName.contains("spotify") ->
-                    "https://open.spotify.com"
-
-                appName.contains("netflix") ->
-                    "https://www.netflix.com"
-
-                appName.contains("gmail") ->
-                    "https://mail.google.com"
-
-                appName == "x" ||
-                        appName.contains("twitter") ->
-                    "https://x.com"
-
-                appName.contains("google") ->
-                    "https://www.google.com"
-
-                else ->
-                    null
-            }
-
-        if (url == null) {
+        if (payload.isBlank()) {
             return null
         }
+
+        val separatorIndex =
+            payload.indexOf('|')
+
+        if (separatorIndex >= 0) {
+
+            val number =
+                payload
+                    .substring(
+                        0,
+                        separatorIndex
+                    )
+                    .trim()
+
+            val message =
+                payload
+                    .substring(
+                        separatorIndex + 1
+                    )
+                    .trim()
+
+            if (
+                number.isNotBlank() &&
+                message.isNotBlank()
+            ) {
+                return number to message
+            }
+        }
+
+        val parts =
+            payload.split(
+                Regex("\\s+"),
+                limit = 2
+            )
+
+        if (parts.size < 2) {
+            return null
+        }
+
+        val number =
+            parts[0].trim()
+
+        val message =
+            parts[1].trim()
+
+        if (
+            number.isBlank() ||
+            message.isBlank()
+        ) {
+            return null
+        }
+
+        return number to message
+    }
+
+    // =========================================================
+    // HELPERS
+    // =========================================================
+
+    private fun containsAny(
+        text: String,
+        vararg values: String
+    ): Boolean {
+
+        return values.any {
+            text.contains(it)
+        }
+    }
+
+    private fun extractAfterPrefix(
+        text: String,
+        prefixes: List<String>
+    ): String {
+
+        val lower =
+            text.lowercase(
+                Locale.forLanguageTag("id-ID")
+            )
+
+        for (prefix in prefixes) {
+
+            if (lower.startsWith(prefix)) {
+
+                return text.substring(
+                    prefix.length
+                ).trim()
+            }
+        }
+
+        return ""
+    }
+
+    private fun startActivity(
+        intent: Intent
+    ): Boolean {
+
+        return try {
+
+            intent.addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK
+            )
+
+            if (
+                intent.resolveActivity(
+                    packageManager
+                ) == null
+            ) {
+                false
+            } else {
+
+                context.startActivity(intent)
+                true
+            }
+
+        } catch (
+            _: Exception
+        ) {
+            false
+        }
+    }
+
+    private fun openUrl(
+        url: String
+    ): Boolean {
 
         val intent =
             Intent(
                 Intent.ACTION_VIEW,
                 Uri.parse(url)
             ).apply {
-                flags =
+                addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK
+                )
             }
 
-        if (!start(intent)) {
-            return null
-        }
+        return startActivity(intent)
+    }
 
-        return success(
-            "Aplikasi tidak ditemukan. Saya membuka versi web-nya, Tuan.",
-            "Web: $appName",
-            url
+    private fun success(
+        spoken: String,
+        title: String,
+        display: String
+    ): ActionResult {
+
+        return ActionResult(
+            success = true,
+            spokenText = spoken,
+            displayText = display,
+            actionTitle = title
         )
     }
 
-    // =========================================================
-    // SEARCH
-    // =========================================================
+    private fun failure(
+        spoken: String,
+        title: String
+    ): ActionResult {
 
-    private fun extractSearchQuery(
-        raw: String
-    ): String? {
-
-        val match =
-            Regex(
-                "^(cari|googling|carikan|search)\\s+(.+)$",
-                RegexOption.IGNORE_CASE
-            ).find(raw)
-
-        return match
-            ?.groupValues
-            ?.getOrNull(2)
-            ?.trim()
-            ?.takeIf {
-                it.isNotBlank()
-            }
-    }
-
-    // =========================================================
-    // PHONE
-    // =========================================================
-
-    private fun extractPhoneNumber(
-        text: String
-    ): String? {
-
-        return Regex(
-            "(?:\\+62|62|0)\\d{8,13}"
+        return ActionResult(
+            success = false,
+            spokenText = spoken,
+            displayText = spoken,
+            actionTitle = title
         )
-            .fin
+    }
+}
