@@ -1,14 +1,6 @@
 package com.example.speech
 
-import android.app.SearchManager
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.provider.AlarmClock
-import android.provider.MediaStore
-import android.provider.Settings
-import android.util.Log
 import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -31,1504 +23,531 @@ data class JarvisResponse(
     val isActionExecuted: Boolean = false
 )
 
-class JarvisBrain(private val context: Context) {
+class JarvisBrain(
+    private val context: Context
+) {
 
-    private val tag = "JarvisBrain"
+    private val tag =
+        "JarvisBrain"
 
-    private val packageManager: PackageManager =
-        context.packageManager
+    private val actionExecutor =
+        JarvisActionExecutor(context)
 
-    private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .writeTimeout(15, TimeUnit.SECONDS)
-        .build()
+    private val httpClient =
+        OkHttpClient.Builder()
+            .connectTimeout(
+                15,
+                TimeUnit.SECONDS
+            )
+            .readTimeout(
+                30,
+                TimeUnit.SECONDS
+            )
+            .writeTimeout(
+                15,
+                TimeUnit.SECONDS
+            )
+            .build()
 
-    private val jokes = listOf(
-        "Kenapa programmer suka kopi dingin? Karena mereka tidak suka Java yang panas!",
-        "Mengapa robot tidak pernah panik? Karena mereka selalu punya program cadangan di memori utama.",
-        "Komputer apa yang paling sopan? Komputer yang selalu bilang Permisi, update tersedia.",
-        "Kenapa keyboard sering begadang? Karena dia punya dua shift setiap hari.",
-        "Apa bedanya internet dan asisten? Kalau internet cari jawaban, kalau saya setia menemani Anda, Tuan."
-    )
+    private val jokes =
+        listOf(
+            "Kenapa programmer suka kopi dingin? Karena mereka tidak suka Java yang panas!",
+            "Mengapa robot tidak pernah panik? Karena mereka selalu punya program cadangan.",
+            "Kenapa keyboard sering begadang? Karena dia punya banyak tombol yang harus dijaga.",
+            "Komputer apa yang paling sopan? Komputer yang selalu bilang permisi ketika meminta update."
+        )
 
-    private val quotes = listOf(
-        "Teknologi terbaik adalah yang menyederhanakan kehidupan manusia. Teruslah berkarya!",
-        "Masa depan bukanlah apa yang kita tunggu, melainkan apa yang kita ciptakan hari ini.",
-        "Setiap baris kode dan setiap usaha kecil akan membentuk mahakarya besar di masa depan.",
-        "Fokus pada proses, nikmati setiap tantangan, dan biarkan hasil membuktikan kualitas Anda."
-    )
-
-    /*
-     * =========================================================
-     * PROCESS COMMAND
-     * =========================================================
-     */
+    private val quotes =
+        listOf(
+            "Masa depan bukanlah sesuatu yang kita tunggu, tetapi sesuatu yang kita ciptakan.",
+            "Setiap langkah kecil tetap membawa Anda lebih dekat kepada tujuan.",
+            "Teknologi terbaik adalah teknologi yang membuat hidup manusia menjadi lebih mudah."
+        )
 
     suspend fun processCommand(
         input: String
-    ): JarvisResponse = withContext(Dispatchers.Default) {
+    ): JarvisResponse =
+        withContext(Dispatchers.Default) {
 
-        val indonesianLocale =
-            Locale.forLanguageTag("id-ID")
+            val query =
+                input.trim()
 
-        val query =
-            input.trim()
+            if (query.isBlank()) {
 
-        if (query.isBlank()) {
-            return@withContext JarvisResponse(
-                spokenText = "Silakan berikan perintah, Tuan.",
-                displayText = "Tidak ada perintah."
-            )
-        }
-
-        val lower =
-            query.lowercase(indonesianLocale)
-
-        /*
-         * =====================================================
-         * 1. DEVICE / APP ACTIONS
-         *
-         * WAJIB DIPERIKSA SEBELUM GEMINI.
-         *
-         * Dengan demikian:
-         *
-         * "buka youtube"
-         * "buka instagram"
-         * "buka whatsapp"
-         *
-         * tidak akan dikirim ke Gemini.
-         * =====================================================
-         */
-
-        handleDeviceActions(
-            lower,
-            query
-        )?.let {
-            return@withContext it
-        }
-
-        /*
-         * =====================================================
-         * 2. TIME & DATE
-         * =====================================================
-         */
-
-        if (
-            matchesAny(
-                lower,
-                "jam berapa",
-                "pukul berapa",
-                "waktu sekarang",
-                "jam skrg",
-                "waktu saat ini"
-            )
-        ) {
-
-            val timeFormat =
-                SimpleDateFormat(
-                    "HH:mm",
-                    indonesianLocale
+                return@withContext JarvisResponse(
+                    spokenText =
+                        "Silakan berikan perintah, Tuan.",
+                    displayText =
+                        "Tidak ada perintah."
                 )
-
-            val currentTime =
-                timeFormat.format(Date())
-
-            val speech =
-                "Saat ini pukul $currentTime Waktu Indonesia Barat, Tuan."
-
-            return@withContext JarvisResponse(
-                spokenText = speech,
-                displayText = speech
-            )
-        }
-
-        if (
-            matchesAny(
-                lower,
-                "hari apa",
-                "tanggal berapa",
-                "hari ini",
-                "tanggal hari ini",
-                "bulan apa",
-                "tahun berapa"
-            )
-        ) {
-
-            val dateFormat =
-                SimpleDateFormat(
-                    "EEEE, d MMMM yyyy",
-                    indonesianLocale
-                )
-
-            val currentDate =
-                dateFormat.format(Date())
-
-            val speech =
-                "Hari ini adalah $currentDate, Tuan."
-
-            return@withContext JarvisResponse(
-                spokenText = speech,
-                displayText = speech
-            )
-        }
-
-        /*
-         * =====================================================
-         * 3. SYSTEM DIAGNOSTIC
-         * =====================================================
-         */
-
-        if (
-            matchesAny(
-                lower,
-                "status sistem",
-                "status jarvis",
-                "diagnostik",
-                "kondisi sistem",
-                "cek sistem"
-            )
-        ) {
-
-            val speech =
-                "Sistem JARVIS V1 online dan berfungsi optimal. Modul pengenal suara bahasa Indonesia aktif, antarmuka siap, semua subsistem beroperasi."
-
-            return@withContext JarvisResponse(
-                spokenText = speech,
-                displayText =
-                    "● DIAGNOSTIK JARVIS V1:\n" +
-                    "- Status: ONLINE\n" +
-                    "- Bahasa: Indonesia (id-ID)\n" +
-                    "- Audio Core: AKTIF\n" +
-                    "- Integritas: SIAP"
-            )
-        }
-
-        /*
-         * =====================================================
-         * 4. IDENTITY
-         * =====================================================
-         */
-
-        if (
-            matchesAny(
-                lower,
-                "siapa kamu",
-                "kamu siapa",
-                "nama kamu",
-                "tentang kamu",
-                "tentang jarvis",
-                "siapa anda"
-            )
-        ) {
-
-            val speech =
-                "Saya adalah JARVIS Versi 1, asisten kecerdasan buatan pribadi Anda berbahasa Indonesia. Saya siap mendengarkan dan membantu perintah suara Anda."
-
-            return@withContext JarvisResponse(
-                spokenText = speech,
-                displayText = speech
-            )
-        }
-
-        /*
-         * =====================================================
-         * 5. GREETINGS
-         * =====================================================
-         */
-
-        if (
-            matchesAny(
-                lower,
-                "halo jarvis",
-                "halo",
-                "hai jarvis",
-                "hai",
-                "hello",
-                "hei jarvis"
-            )
-        ) {
-
-            val speech =
-                "Halo Tuan! Sistem JARVIS siap mendengarkan perintah Anda. Ada yang bisa saya bantu?"
-
-            return@withContext JarvisResponse(
-                spokenText = speech,
-                displayText = speech
-            )
-        }
-
-        if (matchesAny(lower, "selamat pagi")) {
-
-            val speech =
-                "Selamat pagi, Tuan. Semoga hari Anda produktif dan menyenangkan. Sistem siap membantu Anda."
-
-            return@withContext JarvisResponse(
-                spokenText = speech,
-                displayText = speech
-            )
-        }
-
-        if (matchesAny(lower, "selamat siang")) {
-
-            val speech =
-                "Selamat siang, Tuan. Semoga aktivitas hari ini berjalan lancar. Bagaimana saya dapat membantu?"
-
-            return@withContext JarvisResponse(
-                spokenText = speech,
-                displayText = speech
-            )
-        }
-
-        if (matchesAny(lower, "selamat sore")) {
-
-            val speech =
-                "Selamat sore, Tuan. Ada hal yang perlu saya siapkan?"
-
-            return@withContext JarvisResponse(
-                spokenText = speech,
-                displayText = speech
-            )
-        }
-
-        if (matchesAny(lower, "selamat malam")) {
-
-            val speech =
-                "Selamat malam, Tuan. Katakan jika Anda memerlukan sesuatu."
-
-            return@withContext JarvisResponse(
-                spokenText = speech,
-                displayText = speech
-            )
-        }
-
-        if (
-            matchesAny(
-                lower,
-                "terima kasih",
-                "makasih",
-                "thanks",
-                "terimakasih"
-            )
-        ) {
-
-            val speech =
-                "Sama-sama, Tuan. Senang dapat selalu siap siaga melayani Anda."
-
-            return@withContext JarvisResponse(
-                spokenText = speech,
-                displayText = speech
-            )
-        }
-
-        if (
-            matchesAny(
-                lower,
-                "bagaimana kabarmu",
-                "apa kabar",
-                "gimana kabarmu"
-            )
-        ) {
-
-            val speech =
-                "Semua sirkuit komputasi saya dalam kondisi prima, Tuan. Terima kasih telah bertanya."
-
-            return@withContext JarvisResponse(
-                spokenText = speech,
-                displayText = speech
-            )
-        }
-
-        /*
-         * =====================================================
-         * 6. ENTERTAINMENT
-         * =====================================================
-         */
-
-        if (
-            matchesAny(
-                lower,
-                "ceritakan lelucon",
-                "lelucon",
-                "jokes",
-                "humor",
-                "lucu",
-                "cerita lucu"
-            )
-        ) {
-
-            val joke =
-                jokes.random()
-
-            return@withContext JarvisResponse(
-                spokenText = joke,
-                displayText = "JARVIS HUMOR:\n$joke"
-            )
-        }
-
-        if (
-            matchesAny(
-                lower,
-                "motivasi",
-                "kata mutiara",
-                "semangat",
-                "quote"
-            )
-        ) {
-
-            val quote =
-                quotes.random()
-
-            return@withContext JarvisResponse(
-                spokenText = quote,
-                displayText = "KATA MOTIVASI:\n\"$quote\""
-            )
-        }
-
-        if (
-            matchesAny(
-                lower,
-                "lempar koin",
-                "koin",
-                "putar koin"
-            )
-        ) {
-
-            val side =
-                if (Random.nextBoolean()) {
-                    "Gambar"
-                } else {
-                    "Angka"
-                }
-
-            val speech =
-                "Koin dilempar. Hasilnya adalah $side, Tuan."
-
-            return@withContext JarvisResponse(
-                spokenText = speech,
-                displayText =
-                    "🪙 Hasil Lempar Koin: $side"
-            )
-        }
-
-        if (
-            matchesAny(
-                lower,
-                "lempar dadu",
-                "dadu",
-                "kocok dadu"
-            )
-        ) {
-
-            val dice =
-                Random.nextInt(1, 7)
-
-            val speech =
-                "Dadu berhenti pada angka $dice, Tuan."
-
-            return@withContext JarvisResponse(
-                spokenText = speech,
-                displayText =
-                    "🎲 Hasil Dadu: $dice"
-            )
-        }
-
-        /*
-         * =====================================================
-         * 7. MATH
-         * =====================================================
-         */
-
-        handleMathCalculations(
-            lower
-        )?.let {
-            return@withContext it
-        }
-
-        /*
-         * =====================================================
-         * 8. GEMINI
-         * =====================================================
-         */
-
-        val aiResponse =
-            queryGeminiIfAvailable(query)
-
-        if (aiResponse != null) {
-
-            return@withContext JarvisResponse(
-                spokenText = aiResponse,
-                displayText = aiResponse
-            )
-        }
-
-        /*
-         * =====================================================
-         * 9. FALLBACK
-         * =====================================================
-         */
-
-        val defaultSpeech =
-            "Perintah '$query' telah diterima oleh JARVIS. Saya siap menerima instruksi selanjutnya."
-
-        return@withContext JarvisResponse(
-            spokenText = defaultSpeech,
-            displayText =
-                "Perintah tercatat: \"$query\"\n\n" +
-                "JARVIS V1 siap menjalankan perintah suara lainnya."
-        )
-    }
-
-    /*
-     * =========================================================
-     * DEVICE + APPLICATION ACTIONS
-     * =========================================================
-     */
-
-    private fun handleDeviceActions(
-        lower: String,
-        rawQuery: String
-    ): JarvisResponse? {
-
-        try {
-
-            /*
-             * =================================================
-             * CALCULATOR
-             * =================================================
-             */
-
-            if (
-                matchesAny(
-                    lower,
-                    "buka kalkulator",
-                    "kalkulator",
-                    "buka calculator",
-                    "calculator"
-                )
-            ) {
-
-                val intent =
-                    Intent().apply {
-                        action =
-                            Intent.ACTION_MAIN
-
-                        addCategory(
-                            Intent.CATEGORY_APP_CALCULATOR
-                        )
-
-                        flags =
-                            Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-
-                if (
-                    startActivitySafely(
-                        intent
-                    )
-                ) {
-
-                    val speech =
-                        "Membuka kalkulator, Tuan."
-
-                    return JarvisResponse(
-                        spokenText = speech,
-                        displayText = speech,
-                        executedActionTitle =
-                            "Aplikasi Kalkulator",
-                        isActionExecuted = true
-                    )
-                }
             }
 
-            /*
-             * =================================================
-             * CAMERA
-             * =================================================
-             */
-
-            if (
-                matchesAny(
-                    lower,
-                    "buka kamera",
-                    "kamera",
-                    "buka camera",
-                    "camera"
+            val lower =
+                query.lowercase(
+                    Locale.forLanguageTag(
+                        "id-ID"
+                    )
                 )
-            ) {
-
-                val intent =
-                    Intent(
-                        MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA
-                    ).apply {
-                        flags =
-                            Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-
-                if (
-                    startActivitySafely(
-                        intent
-                    )
-                ) {
-
-                    val speech =
-                        "Membuka kamera, Tuan."
-
-                    return JarvisResponse(
-                        spokenText = speech,
-                        displayText = speech,
-                        executedActionTitle =
-                            "Kamera Perangkat",
-                        isActionExecuted = true
-                    )
-                }
-            }
 
             /*
-             * =================================================
-             * ALARM / CLOCK
-             * =================================================
-             */
-
-            if (
-                matchesAny(
-                    lower,
-                    "buka alarm",
-                    "buka jam",
-                    "setel alarm",
-                    "alarm",
-                    "jam"
-                )
-            ) {
-
-                val intent =
-                    Intent(
-                        AlarmClock.ACTION_SHOW_ALARMS
-                    ).apply {
-                        flags =
-                            Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-
-                if (
-                    startActivitySafely(
-                        intent
-                    )
-                ) {
-
-                    val speech =
-                        "Membuka jam dan alarm, Tuan."
-
-                    return JarvisResponse(
-                        spokenText = speech,
-                        displayText = speech,
-                        executedActionTitle =
-                            "Alarm dan Jam",
-                        isActionExecuted = true
-                    )
-                }
-            }
-
-            /*
-             * =================================================
-             * SETTINGS
-             * =================================================
-             */
-
-            if (
-                matchesAny(
-                    lower,
-                    "buka pengaturan",
-                    "pengaturan",
-                    "buka setting",
-                    "setting",
-                    "settings"
-                )
-            ) {
-
-                val intent =
-                    Intent(
-                        Settings.ACTION_SETTINGS
-                    ).apply {
-                        flags =
-                            Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-
-                if (
-                    startActivitySafely(
-                        intent
-                    )
-                ) {
-
-                    val speech =
-                        "Membuka pengaturan perangkat, Tuan."
-
-                    return JarvisResponse(
-                        spokenText = speech,
-                        displayText = speech,
-                        executedActionTitle =
-                            "Pengaturan Sistem",
-                        isActionExecuted = true
-                    )
-                }
-            }
-
-            /*
-             * =================================================
-             * SPECIAL WEB APPS
+             * ==================================================
+             * PRIORITAS 1
+             * ANDROID ACTION
              *
-             * YouTube dan Instagram akan dicoba sebagai
-             * aplikasi terlebih dahulu.
-             *
-             * Jika tidak ditemukan, browser dibuka.
-             * =================================================
+             * Harus dilakukan sebelum Gemini.
+             * ==================================================
              */
 
-            val appName =
-                extractApplicationName(
-                    lower
-                )
-
-            if (
-                appName.isNotBlank()
-            ) {
-
-                val normalizedAppName =
-                    normalizeApplicationName(
-                        appName
-                    )
-
-                /*
-                 * Coba cari aplikasi yang benar-benar
-                 * terpasang di perangkat.
-                 */
-
-                val launchResult =
-                    launchInstalledApplication(
-                        normalizedAppName
-                    )
-
-                if (launchResult != null) {
-
-                    return launchResult
-                }
-
-                /*
-                 * Jika aplikasi populer tidak ditemukan,
-                 * buka situs resminya sebagai fallback.
-                 */
-
-                val fallbackUrl =
-                    getKnownAppWebUrl(
-                        normalizedAppName
-                    )
-
-                if (fallbackUrl != null) {
-
-                    val browserIntent =
-                        Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse(fallbackUrl)
-                        ).apply {
-                            flags =
-                                Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-
-                    if (
-                        startActivitySafely(
-                            browserIntent
-                        )
-                    ) {
-
-                        val speech =
-                            "Aplikasi $appName tidak ditemukan. Saya membuka versi web-nya, Tuan."
-
-                        return JarvisResponse(
-                            spokenText = speech,
-                            displayText = speech,
-                            executedActionTitle =
-                                "Web $appName",
-                            isActionExecuted = true
-                        )
-                    }
-                }
-            }
-
-            /*
-             * =================================================
-             * WEB SEARCH
-             * =================================================
-             */
-
-            if (
-                lower.startsWith("cari ") ||
-                lower.startsWith("googling ") ||
-                lower.startsWith("browsing ")
-            ) {
-
-                val searchTerm =
-                    rawQuery.replace(
-                        Regex(
-                            "^(cari|googling|browsing)\\s+",
-                            RegexOption.IGNORE_CASE
-                        ),
-                        ""
-                    ).trim()
-
-                if (
-                    searchTerm.isNotBlank()
-                ) {
-
-                    val intent =
-                        Intent(
-                            Intent.ACTION_WEB_SEARCH
-                        ).apply {
-
-                            putExtra(
-                                SearchManager.QUERY,
-                                searchTerm
-                            )
-
-                            flags =
-                                Intent.FLAG_ACTIVITY_NEW_TASK
-                        }
-
-                    if (
-                        !startActivitySafely(
-                            intent
-                        )
-                    ) {
-
-                        val browserIntent =
-                            Intent(
-                                Intent.ACTION_VIEW,
-                                Uri.parse(
-                                    "https://www.google.com/search?q=${
-                                        Uri.encode(searchTerm)
-                                    }"
-                                )
-                            ).apply {
-                                flags =
-                                    Intent.FLAG_ACTIVITY_NEW_TASK
-                            }
-
-                        startActivitySafely(
-                            browserIntent
-                        )
-                    }
-
-                    val speech =
-                        "Mencari $searchTerm di web, Tuan."
-
-                    return JarvisResponse(
-                        spokenText = speech,
-                        displayText = speech,
-                        executedActionTitle =
-                            "Pencarian Web: $searchTerm",
-                        isActionExecuted = true
-                    )
-                }
-            }
-
-        } catch (e: Exception) {
-
-            Log.e(
-                tag,
-                "Error triggering device/application action",
-                e
-            )
-        }
-
-        return null
-    }
-
-    /*
-     * =========================================================
-     * EXTRACT APPLICATION NAME
-     * =========================================================
-     *
-     * Contoh:
-     *
-     * "buka youtube"
-     * -> "youtube"
-     *
-     * "tolong buka instagram"
-     * -> "instagram"
-     *
-     * "jalankan whatsapp"
-     * -> "whatsapp"
-     *
-     * "launch chrome"
-     * -> "chrome"
-     */
-
-    private fun extractApplicationName(
-        lower: String
-    ): String {
-
-        val patterns =
-            listOf(
-                "^buka aplikasi\\s+(.+)$",
-                "^bukakan aplikasi\\s+(.+)$",
-                "^tolong buka aplikasi\\s+(.+)$",
-                "^buka\\s+(.+)$",
-                "^bukakan\\s+(.+)$",
-                "^tolong buka\\s+(.+)$",
-                "^jalankan\\s+(.+)$",
-                "^jalankan aplikasi\\s+(.+)$",
-                "^buka app\\s+(.+)$",
-                "^open\\s+(.+)$",
-                "^launch\\s+(.+)$",
-                "^run\\s+(.+)$"
-            )
-
-        for (
-            pattern in patterns
-        ) {
-
-            val match =
-                Regex(pattern)
-                    .find(lower)
-
-            if (
-                match != null
-            ) {
-
-                val result =
-                    match.groupValues
-                        .getOrNull(1)
-                        ?.trim()
-                        ?: ""
-
-                if (
-                    result.isNotBlank()
-                ) {
-
-                    return result
-                }
-            }
-        }
-
-        return ""
-    }
-
-    /*
-     * =========================================================
-     * NORMALIZE APPLICATION NAME
-     * =========================================================
-     */
-
-    private fun normalizeApplicationName(
-        name: String
-    ): String {
-
-        return name
-            .lowercase(Locale.forLanguageTag("id-ID"))
-            .trim()
-            .removePrefix("aplikasi ")
-            .removePrefix("app ")
-            .removeSuffix(" aplikasi")
-            .trim()
-    }
-
-    /*
-     * =========================================================
-     * FIND + LAUNCH INSTALLED APPLICATION
-     * =========================================================
-     *
-     * Ini bagian utama fitur "buka semua aplikasi".
-     *
-     * JARVIS mengambil daftar aplikasi yang memiliki
-     * launcher activity, kemudian membandingkan:
-     *
-     * - label aplikasi
-     * - nama package
-     *
-     * dengan nama yang diucapkan pengguna.
-     */
-
-    private fun launchInstalledApplication(
-        requestedName: String
-    ): JarvisResponse? {
-
-        val normalizedRequest =
-            normalizeApplicationName(
-                requestedName
-            )
-
-        if (
-            normalizedRequest.isBlank()
-        ) {
-            return null
-        }
-
-        val launcherIntent =
-            Intent(
-                Intent.ACTION_MAIN
-            ).apply {
-                addCategory(
-                    Intent.CATEGORY_LAUNCHER
-                )
-            }
-
-        val activities =
             try {
-                packageManager.queryIntentActivities(
-                    launcherIntent,
-                    PackageManager.MATCH_ALL
-                )
+
+                val action =
+                    actionExecutor.execute(
+                        query
+                    )
+
+                if (action != null) {
+
+                    return@withContext JarvisResponse(
+                        spokenText =
+                            action.spokenText,
+
+                        displayText =
+                            action.displayText,
+
+                        executedActionTitle =
+                            action.actionTitle,
+
+                        isActionExecuted =
+                            action.success
+                    )
+                }
+
             } catch (e: Exception) {
 
-                Log.e(
+                android.util.Log.e(
                     tag,
-                    "Gagal mengambil daftar aplikasi",
+                    "Action execution error",
                     e
                 )
 
-                emptyList()
+                return@withContext JarvisResponse(
+                    spokenText =
+                        "Maaf Tuan, terjadi kesalahan saat menjalankan perintah.",
+
+                    displayText =
+                        e.localizedMessage
+                            ?: "Action execution error",
+
+                    isActionExecuted =
+                        false
+                )
             }
 
-        if (
-            activities.isEmpty()
-        ) {
-            return null
-        }
-
-        /*
-         * Kandidat terbaik.
-         */
-
-        var bestPackageName: String? =
-            null
-
-        var bestLabel: String? =
-            null
-
-        var bestScore =
-            0
-
-        for (
-            info in activities
-        ) {
-
-            val applicationInfo =
-                info.activityInfo.applicationInfo
-
-            val label =
-                try {
-                    applicationInfo
-                        .loadLabel(packageManager)
-                        .toString()
-                } catch (
-                    e: Exception
-                ) {
-                    ""
-                }
-
-            val labelNormalized =
-                label
-                    .lowercase(
-                        Locale.forLanguageTag("id-ID")
-                    )
-                    .trim()
-
-            val packageName =
-                applicationInfo.packageName
-                    .lowercase(
-                        Locale.forLanguageTag("id-ID")
-                    )
-
-            val score =
-                calculateApplicationMatchScore(
-                    normalizedRequest,
-                    labelNormalized,
-                    packageName
-                )
+            /*
+             * ==================================================
+             * WAKTU
+             * ==================================================
+             */
 
             if (
-                score > bestScore
+                containsAny(
+                    lower,
+                    "jam berapa",
+                    "pukul berapa",
+                    "waktu sekarang",
+                    "jam sekarang"
+                )
             ) {
 
-                bestScore =
-                    score
-
-                bestPackageName =
-                    applicationInfo.packageName
-
-                bestLabel =
-                    label
-            }
-        }
-
-        /*
-         * Score minimum mencegah JARVIS membuka aplikasi
-         * yang namanya sebenarnya tidak cocok.
-         */
-
-        if (
-            bestPackageName.isNullOrBlank() ||
-            bestLabel.isNullOrBlank() ||
-            bestScore < 50
-        ) {
-            return null
-        }
-
-        return try {
-
-            val launchIntent =
-                packageManager
-                    .getLaunchIntentForPackage(
-                        bestPackageName!!
-                    )
-
-            if (
-                launchIntent == null
-            ) {
-                null
-            } else {
-
-                launchIntent.apply {
-
-                    flags =
-                        Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
-                }
-
-                context.startActivity(
-                    launchIntent
-                )
-
-                val speech =
-                    "Membuka $bestLabel, Tuan."
-
-                JarvisResponse(
-                    spokenText = speech,
-                    displayText = speech,
-                    executedActionTitle =
-                        "Membuka aplikasi: $bestLabel",
-                    isActionExecuted = true
-                )
-            }
-
-        } catch (e: Exception) {
-
-            Log.e(
-                tag,
-                "Gagal membuka aplikasi $bestPackageName",
-                e
-            )
-
-            null
-        }
-    }
-
-    /*
-     * =========================================================
-     * APPLICATION MATCH SCORE
-     * =========================================================
-     */
-
-    private fun calculateApplicationMatchScore(
-        requestedName: String,
-        label: String,
-        packageName: String
-    ): Int {
-
-        /*
-         * Exact label.
-         */
-
-        if (
-            label == requestedName
-        ) {
-            return 100
-        }
-
-        /*
-         * Label dimulai dengan nama yang diminta.
-         */
-
-        if (
-            label.startsWith(requestedName)
-        ) {
-            return 90
-        }
-
-        /*
-         * Nama yang diminta merupakan seluruh label.
-         */
-
-        if (
-            label.contains(requestedName)
-        ) {
-            return 80
-        }
-
-        /*
-         * Package name exact.
-         */
-
-        if (
-            packageName == requestedName
-        ) {
-            return 85
-        }
-
-        /*
-         * Package name mengandung nama aplikasi.
-         */
-
-        if (
-            packageName.contains(requestedName)
-        ) {
-            return 70
-        }
-
-        /*
-         * Pecah menjadi kata-kata.
-         */
-
-        val requestedWords =
-            requestedName
-                .split(
-                    Regex("\\s+")
-                )
-                .filter {
-                    it.length >= 2
-                }
-
-        if (
-            requestedWords.isNotEmpty() &&
-            requestedWords.all {
-                label.contains(it)
-            }
-        ) {
-            return 65
-        }
-
-        return 0
-    }
-
-    /*
-     * =========================================================
-     * KNOWN APP WEB FALLBACK
-     * =========================================================
-     */
-
-    private fun getKnownAppWebUrl(
-        appName: String
-    ): String? {
-
-        return when {
-
-            appName.contains("youtube") ->
-                "https://www.youtube.com"
-
-            appName.contains("instagram") ->
-                "https://www.instagram.com"
-
-            appName.contains("facebook") ->
-                "https://www.facebook.com"
-
-            appName.contains("tiktok") ->
-                "https://www.tiktok.com"
-
-            appName.contains("whatsapp") ->
-                "https://web.whatsapp.com"
-
-            appName.contains("telegram") ->
-                "https://web.telegram.org"
-
-            appName.contains("twitter") ||
-            appName == "x" ->
-                "https://x.com"
-
-            appName.contains("spotify") ->
-                "https://open.spotify.com"
-
-            appName.contains("netflix") ->
-                "https://www.netflix.com"
-
-            appName.contains("gmail") ->
-                "https://mail.google.com"
-
-            appName.contains("google") ->
-                "https://www.google.com"
-
-            else ->
-                null
-        }
-    }
-
-    /*
-     * =========================================================
-     * SAFE START ACTIVITY
-     * =========================================================
-     */
-
-    private fun startActivitySafely(
-        intent: Intent
-    ): Boolean {
-
-        return try {
-
-            if (
-                !isIntentResolvable(intent)
-            ) {
-                return false
-            }
-
-            context.startActivity(
-                intent
-            )
-
-            true
-
-        } catch (e: Exception) {
-
-            Log.e(
-                tag,
-                "Tidak dapat menjalankan Intent: ${intent.action}",
-                e
-            )
-
-            false
-        }
-    }
-
-    /*
-     * =========================================================
-     * INTENT RESOLUTION
-     * =========================================================
-     */
-
-    private fun isIntentResolvable(
-        intent: Intent
-    ): Boolean {
-
-        return try {
-
-            packageManager
-                .resolveActivity(
-                    intent,
-                    PackageManager.MATCH_DEFAULT_ONLY
-                ) != null
-
-        } catch (
-            e: Exception
-        ) {
-
-            false
-        }
-    }
-
-    /*
-     * =========================================================
-     * MATCH HELPER
-     * =========================================================
-     */
-
-    private fun matchesAny(
-        value: String,
-        vararg options: String
-    ): Boolean {
-
-        return options.any {
-            value == it ||
-                    value.contains(it)
-        }
-    }
-
-    /*
-     * =========================================================
-     * MATH CALCULATIONS
-     * =========================================================
-     */
-
-    private fun handleMathCalculations(
-        lower: String
-    ): JarvisResponse? {
-
-        val mathPattern =
-            Regex(
-                "(hitung|berapa)?\\s*" +
-                        "(\\d+(?:\\.\\d+)?)\\s*" +
-                        "(tambah|\\+|kurang|-|kali|\\*|x|bagi|/)\\s*" +
-                        "(\\d+(?:\\.\\d+)?)"
-            )
-
-        val match =
-            mathPattern.find(lower)
-                ?: return null
-
-        val num1 =
-            match.groupValues[2]
-                .toDoubleOrNull()
-                ?: return null
-
-        val operator =
-            match.groupValues[3]
-
-        val num2 =
-            match.groupValues[4]
-                .toDoubleOrNull()
-                ?: return null
-
-        val (
-            opName,
-            result
-        ) =
-            when (operator) {
-
-                "tambah",
-                "+" ->
-                    "ditambah" to
-                            (num1 + num2)
-
-                "kurang",
-                "-" ->
-                    "dikurang" to
-                            (num1 - num2)
-
-                "kali",
-                "*",
-                "x" ->
-                    "dikali" to
-                            (num1 * num2)
-
-                "bagi",
-                "/" -> {
-
-                    if (
-                        num2 == 0.0
-                    ) {
-
-                        val speech =
-                            "Maaf Tuan, pembagian dengan angka nol tidak terdefinisi dalam matematika."
-
-                        return JarvisResponse(
-                            spokenText = speech,
-                            displayText = speech
+                val time =
+                    SimpleDateFormat(
+                        "HH:mm",
+                        Locale.forLanguageTag(
+                            "id-ID"
                         )
+                    ).format(
+                        Date()
+                    )
+
+                val answer =
+                    "Saat ini pukul $time, Tuan."
+
+                return@withContext JarvisResponse(
+                    spokenText = answer,
+                    displayText = answer
+                )
+            }
+
+            /*
+             * ==================================================
+             * TANGGAL
+             * ==================================================
+             */
+
+            if (
+                containsAny(
+                    lower,
+                    "tanggal berapa",
+                    "hari apa",
+                    "tanggal hari ini",
+                    "hari ini"
+                )
+            ) {
+
+                val date =
+                    SimpleDateFormat(
+                        "EEEE, d MMMM yyyy",
+                        Locale.forLanguageTag(
+                            "id-ID"
+                        )
+                    ).format(
+                        Date()
+                    )
+
+                val answer =
+                    "Hari ini adalah $date, Tuan."
+
+                return@withContext JarvisResponse(
+                    spokenText = answer,
+                    displayText = answer
+                )
+            }
+
+            /*
+             * ==================================================
+             * IDENTITAS
+             * ==================================================
+             */
+
+            if (
+                containsAny(
+                    lower,
+                    "siapa kamu",
+                    "kamu siapa",
+                    "nama kamu",
+                    "siapa anda",
+                    "tentang jarvis"
+                )
+            ) {
+
+                val answer =
+                    "Saya adalah JARVIS V1, asisten AI pribadi Anda. Saya siap membantu menjalankan perintah dan memberikan informasi, Tuan."
+
+                return@withContext JarvisResponse(
+                    spokenText = answer,
+                    displayText = answer
+                )
+            }
+
+            /*
+             * ==================================================
+             * SAPAAN
+             * ==================================================
+             */
+
+            if (
+                containsAny(
+                    lower,
+                    "halo",
+                    "hai",
+                    "hello",
+                    "halo jarvis",
+                    "hai jarvis"
+                )
+            ) {
+
+                val answer =
+                    "Halo Tuan. JARVIS siap menerima perintah Anda."
+
+                return@withContext JarvisResponse(
+                    spokenText = answer,
+                    displayText = answer
+                )
+            }
+
+            /*
+             * ==================================================
+             * TERIMA KASIH
+             * ==================================================
+             */
+
+            if (
+                containsAny(
+                    lower,
+                    "terima kasih",
+                    "terimakasih",
+                    "makasih",
+                    "thanks"
+                )
+            ) {
+
+                val answer =
+                    "Sama-sama, Tuan."
+
+                return@withContext JarvisResponse(
+                    spokenText = answer,
+                    displayText = answer
+                )
+            }
+
+            /*
+             * ==================================================
+             * DIAGNOSTIC
+             * ==================================================
+             */
+
+            if (
+                containsAny(
+                    lower,
+                    "status sistem",
+                    "status jarvis",
+                    "cek sistem",
+                    "diagnostik"
+                )
+            ) {
+
+                val answer =
+                    "Sistem JARVIS V1 online. Modul suara dan action executor siap digunakan."
+
+                return@withContext JarvisResponse(
+                    spokenText = answer,
+                    displayText =
+                        "JARVIS V1\n\n" +
+                            "Status: ONLINE\n" +
+                            "Voice: AKTIF\n" +
+                            "Action Executor: AKTIF\n" +
+                            "AI Core: SIAP"
+                )
+            }
+
+            /*
+             * ==================================================
+             * JOKES
+             * ==================================================
+             */
+
+            if (
+                containsAny(
+                    lower,
+                    "jokes",
+                    "lelucon",
+                    "cerita lucu",
+                    "lelucon lucu",
+                    "humor"
+                )
+            ) {
+
+                val answer =
+                    jokes.random()
+
+                return@withContext JarvisResponse(
+                    spokenText = answer,
+                    displayText =
+                        "JARVIS HUMOR\n\n$answer"
+                )
+            }
+
+            /*
+             * ==================================================
+             * MOTIVASI
+             * ==================================================
+             */
+
+            if (
+                containsAny(
+                    lower,
+                    "motivasi",
+                    "kata mutiara",
+                    "kata bijak",
+                    "semangat"
+                )
+            ) {
+
+                val answer =
+                    quotes.random()
+
+                return@withContext JarvisResponse(
+                    spokenText = answer,
+                    displayText =
+                        "MOTIVASI\n\n$answer"
+                )
+            }
+
+            /*
+             * ==================================================
+             * KOIN
+             * ==================================================
+             */
+
+            if (
+                containsAny(
+                    lower,
+                    "lempar koin",
+                    "lemparkan koin",
+                    "kocok koin"
+                )
+            ) {
+
+                val result =
+                    if (
+                        Random.nextBoolean()
+                    ) {
+                        "Gambar"
+                    } else {
+                        "Angka"
                     }
 
-                    "dibagi" to
-                            (num1 / num2)
-                }
+                val answer =
+                    "Hasil lemparan koin adalah $result, Tuan."
 
-                else ->
-                    return null
-            }
-
-        val formattedResult =
-            if (
-                result % 1.0 == 0.0
-            ) {
-
-                result
-                    .toLong()
-                    .toString()
-
-            } else {
-
-                String.format(
-                    Locale.forLanguageTag("id-ID"),
-                    "%.2f",
-                    result
+                return@withContext JarvisResponse(
+                    spokenText = answer,
+                    displayText =
+                        "🪙 $result"
                 )
             }
 
-        val speech =
-            "Hasil dari $num1 $opName $num2 adalah $formattedResult, Tuan."
+            /*
+             * ==================================================
+             * DADU
+             * ==================================================
+             */
 
-        val display =
-            "KALKULASI MATEMATIKA:\n" +
-                    "$num1 $operator $num2 = $formattedResult"
+            if (
+                containsAny(
+                    lower,
+                    "lempar dadu",
+                    "kocok dadu",
+                    "lemparkan dadu"
+                )
+            ) {
 
-        return JarvisResponse(
-            spokenText = speech,
-            displayText = display
-        )
-    }
+                val result =
+                    Random.nextInt(
+                        1,
+                        7
+                    )
 
-    /*
-     * =========================================================
-     * GEMINI
-     * =========================================================
-     */
+                val answer =
+                    "Dadu menunjukkan angka $result, Tuan."
 
-    private suspend fun queryGeminiIfAvailable(
+                return@withContext JarvisResponse(
+                    spokenText = answer,
+                    displayText =
+                        "🎲 $result"
+                )
+            }
+
+            /*
+             * ==================================================
+             * MATH
+             * ==================================================
+             */
+
+            calculateSimpleExpression(
+                query
+            )?.let { result ->
+
+                return@withContext JarvisResponse(
+                    spokenText =
+                        "Hasilnya adalah $result, Tuan.",
+
+                    displayText =
+                        "Hasil: $result"
+                )
+            }
+
+            /*
+             * ==================================================
+             * GEMINI
+             * ==================================================
+             */
+
+            val gemini =
+                askGemini(
+                    query
+                )
+
+            if (
+                gemini != null &&
+                gemini.isNotBlank()
+            ) {
+
+                return@withContext JarvisResponse(
+                    spokenText =
+                        gemini,
+
+                    displayText =
+                        gemini
+                )
+            }
+
+            /*
+             * ==================================================
+             * FALLBACK
+             * ==================================================
+             */
+
+            val fallback =
+                "Saya memahami perintah Anda, Tuan, tetapi saya belum memiliki kemampuan khusus untuk menjalankan perintah tersebut."
+
+            return@withContext JarvisResponse(
+                spokenText =
+                    fallback,
+
+                displayText =
+                    "Perintah belum didukung:\n$query"
+            )
+        }
+
+    private fun askGemini(
         prompt: String
-    ): String? = withContext(Dispatchers.IO) {
+    ): String? {
 
         val apiKey =
-            BuildConfig.GEMINI_API_KEY
+            try {
+                BuildConfig.GEMINI_API_KEY
+            } catch (
+                _: Throwable
+            ) {
+                ""
+            }
 
         if (
             apiKey.isBlank() ||
-            apiKey == "MY_GEMINI_API_KEY"
+            apiKey == "null"
         ) {
-            return@withContext null
+            return null
         }
 
-        try {
+        return try {
 
             val url =
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey"
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$apiKey"
 
-            val systemInstruction =
-                "Kamu adalah JARVIS V1, asisten kecerdasan buatan pribadi futuristik berbahasa Indonesia. " +
-                        "Berikan jawaban dalam bahasa Indonesia yang ramah, sopan, langsung ke intinya, " +
-                        "dan sangat nyaman didengar via Text-to-Speech. " +
-                        "Maksimal 2-3 kalimat pendek. " +
-                        "Jangan gunakan tanda bintang, format markdown tebal, atau simbol rumit."
-
-            val jsonBody =
+            val body =
                 JSONObject().apply {
 
                     put(
                         "contents",
-                        JSONArray().apply {
+                        JSONArray().put(
 
-                            put(
-                                JSONObject().apply {
+                            JSONObject().apply {
 
-                                    put(
-                                        "parts",
-                                        JSONArray().apply {
+                                put(
+                                    "parts",
+                                    JSONArray().put(
 
-                                            put(
-                                                JSONObject().apply {
-                                                    put(
-                                                        "text",
-                                                        prompt
-                                                    )
-                                                }
+                                        JSONObject().put(
+                                            "text",
+                                            buildPrompt(
+                                                prompt
                                             )
-                                        }
+                                        )
                                     )
-                                }
-                            )
-                        }
-                    )
-
-                    put(
-                        "systemInstruction",
-                        JSONObject().apply {
-
-                            put(
-                                "parts",
-                                JSONArray().apply {
-
-                                    put(
-                                        JSONObject().apply {
-                                            put(
-                                                "text",
-                                                systemInstruction
-                                            )
-                                        }
-                                    )
-                                }
-                            )
-                        }
+                                )
+                            }
+                        )
                     )
 
                     put(
@@ -1542,7 +561,7 @@ class JarvisBrain(private val context: Context) {
 
                             put(
                                 "maxOutputTokens",
-                                150
+                                512
                             )
                         }
                     )
@@ -1552,8 +571,7 @@ class JarvisBrain(private val context: Context) {
                 Request.Builder()
                     .url(url)
                     .post(
-                        jsonBody
-                            .toString()
+                        body.toString()
                             .toRequestBody(
                                 "application/json"
                                     .toMediaType()
@@ -1561,95 +579,211 @@ class JarvisBrain(private val context: Context) {
                     )
                     .build()
 
-            val response =
-                okHttpClient
-                    .newCall(request)
-                    .execute()
+            httpClient
+                .newCall(request)
+                .execute()
+                .use { response ->
 
-            response.use {
+                    if (
+                        !response.isSuccessful
+                    ) {
+                        return null
+                    }
 
-                if (
-                    !it.isSuccessful
-                ) {
+                    val responseBody =
+                        response.body
+                            ?.string()
+                            ?: return null
 
-                    Log.e(
-                        tag,
-                        "Gemini HTTP ${it.code}: ${it.message}"
-                    )
-
-                    return@withContext null
-                }
-
-                val body =
-                    it.body?.string()
-                        ?: return@withContext null
-
-                val json =
-                    JSONObject(body)
-
-                val candidates =
-                    json.optJSONArray(
-                        "candidates"
-                    )
-                        ?: return@withContext null
-
-                if (
-                    candidates.length() == 0
-                ) {
-                    return@withContext null
-                }
-
-                val firstCandidate =
-                    candidates.optJSONObject(0)
-                        ?: return@withContext null
-
-                val content =
-                    firstCandidate
-                        .optJSONObject("content")
-                        ?: return@withContext null
-
-                val parts =
-                    content.optJSONArray(
-                        "parts"
-                    )
-                        ?: return@withContext null
-
-                if (
-                    parts.length() == 0
-                ) {
-                    return@withContext null
-                }
-
-                val text =
-                    parts
-                        .optJSONObject(0)
-                        ?.optString(
-                            "text",
-                            ""
+                    val root =
+                        JSONObject(
+                            responseBody
                         )
-                        ?.trim()
-                        ?: ""
 
-                if (
-                    text.isBlank()
-                ) {
-                    null
-                } else {
-                    text
+                    val candidates =
+                        root.optJSONArray(
+                            "candidates"
+                        )
+                            ?: return null
+
+                    if (
+                        candidates.length() == 0
+                    ) {
+                        return null
+                    }
+
+                    val candidate =
+                        candidates
+                            .optJSONObject(0)
+                            ?: return null
+
+                    val content =
+                        candidate.optJSONObject(
+                            "content"
+                        )
+                            ?: return null
+
+                    val parts =
+                        content.optJSONArray(
+                            "parts"
+                        )
+                            ?: return null
+
+                    if (
+                        parts.length() == 0
+                    ) {
+                        return null
+                    }
+
+                    val text =
+                        parts
+                            .optJSONObject(0)
+                            ?.optString(
+                                "text",
+                                ""
+                            )
+                            ?.trim()
+
+                    if (
+                        text.isNullOrBlank()
+                    ) {
+                        null
+                    } else {
+                        text
+                    }
                 }
-            }
 
-        } catch (
-            e: Exception
-        ) {
+        } catch (e: Exception) {
 
-            Log.e(
+            android.util.Log.e(
                 tag,
                 "Gemini request failed",
                 e
             )
 
             null
+        }
+    }
+
+    private fun buildPrompt(
+        userPrompt: String
+    ): String {
+
+        return """
+            Anda adalah JARVIS V1, asisten AI pribadi pengguna.
+            
+            Gunakan bahasa Indonesia yang natural,
+            singkat, sopan, dan bergaya asisten teknologi
+            yang tenang dan profesional.
+            
+            Jangan mengaku telah menjalankan tindakan Android
+            jika tindakan tersebut belum benar-benar dijalankan
+            oleh Action Executor.
+            
+            Jawab pertanyaan pengguna secara langsung.
+            
+            Pengguna:
+            $userPrompt
+        """.trimIndent()
+    }
+
+    private fun calculateSimpleExpression(
+        input: String
+    ): Double? {
+
+        val cleaned =
+            input
+                .lowercase(
+                    Locale.US
+                )
+                .replace(
+                    "berapa",
+                    ""
+                )
+                .replace(
+                    "hasil",
+                    ""
+                )
+                .replace(
+                    "hitung",
+                    ""
+                )
+                .replace(
+                    "adalah",
+                    ""
+                )
+                .trim()
+
+        val match =
+            Regex(
+                """(-?\d+(?:[.,]\d+)?)\s*(\+|tambah|minus|-|kali|\*|x|bagi|/)\s*(-?\d+(?:[.,]\d+)?)"""
+            ).find(
+                cleaned
+            )
+                ?: return null
+
+        val first =
+            match
+                .groupValues[1]
+                .replace(
+                    ",",
+                    "."
+                )
+                .toDoubleOrNull()
+                ?: return null
+
+        val operator =
+            match.groupValues[2]
+
+        val second =
+            match
+                .groupValues[3]
+                .replace(
+                    ",",
+                    "."
+                )
+                .toDoubleOrNull()
+                ?: return null
+
+        return when (operator) {
+
+            "+",
+            "tambah" ->
+                first + second
+
+            "-",
+            "minus" ->
+                first - second
+
+            "*",
+            "x",
+            "kali" ->
+                first * second
+
+            "/",
+            "bagi" -> {
+
+                if (
+                    second == 0.0
+                ) {
+                    null
+                } else {
+                    first / second
+                }
+            }
+
+            else ->
+                null
+        }
+    }
+
+    private fun containsAny(
+        text: String,
+        vararg values: String
+    ): Boolean {
+
+        return values.any {
+            text.contains(it)
         }
     }
 }
