@@ -20,7 +20,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
@@ -242,10 +241,10 @@ class JarvisViewModel(
         observeWakeWordService()
 
         /*
-         * Service TIDAK dijalankan dari init.
+         * Service sengaja TIDAK dijalankan dari init.
          *
-         * Service akan dijalankan oleh MainActivity
-         * setelah permission RECORD_AUDIO diberikan.
+         * Service dijalankan oleh MainActivity setelah
+         * permission RECORD_AUDIO diberikan.
          */
     }
 
@@ -709,7 +708,7 @@ class JarvisViewModel(
                     getApplication()
                 )
 
-        } catch (e: Exception) {
+        } catch (_: Exception) {
         }
     }
 
@@ -722,7 +721,7 @@ class JarvisViewModel(
                     getApplication()
                 )
 
-        } catch (e: Exception) {
+        } catch (_: Exception) {
         }
     }
 
@@ -920,3 +919,4 @@ class JarvisViewModel(
 
         super.onCleared()
     }
+}
