@@ -3,28 +3,72 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- =========================================================
+         PERMISSIONS
+         ========================================================= -->
+
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- Foreground service -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <!-- Android 13+ notification -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- =========================================================
+         PACKAGE VISIBILITY
+         
+         Penting untuk JARVIS agar dapat mendeteksi aplikasi
+         yang terpasang dan memiliki launcher icon.
+         ========================================================= -->
 
     <queries>
 
+        <!-- Speech Recognition -->
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
 
+        <!-- Text To Speech -->
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
 
+        <!-- Browser / Web -->
         <intent>
             <action android:name="android.intent.action.VIEW" />
         </intent>
 
+        <!--
+            APLIKASI YANG MEMILIKI LAUNCHER
+
+            Ini memungkinkan JarvisActionExecutor melakukan
+            query terhadap aplikasi seperti:
+
+            YouTube
+            Instagram
+            WhatsApp
+            Telegram
+            Chrome
+            TikTok
+            Spotify
+            Facebook
+            Gmail
+            dan aplikasi launcher lainnya.
+        -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+
     </queries>
+
+    <!-- =========================================================
+         APPLICATION
+         ========================================================= -->
 
     <application
         android:allowBackup="true"
@@ -36,11 +80,24 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication">
 
+        <!-- =====================================================
+             JARVIS VOICE SERVICE
+
+             Digunakan untuk:
+             - Wake word
+             - Passive microphone
+             - Background voice detection
+             ===================================================== -->
+
         <service
             android:name=".service.JarvisVoiceService"
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- =====================================================
+             MAIN ACTIVITY
+             ===================================================== -->
 
         <activity
             android:name=".MainActivity"
@@ -51,8 +108,12 @@
             android:windowSoftInputMode="adjustResize">
 
             <intent-filter>
+
                 <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
+
+                <category
+                    android:name="android.intent.category.LAUNCHER" />
+
             </intent-filter>
 
         </activity>
