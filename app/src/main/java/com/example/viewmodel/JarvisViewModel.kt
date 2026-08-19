@@ -242,10 +242,11 @@ class JarvisViewModel(
         observeWakeWordService()
 
         /*
-         * Tidak memaksa service berjalan apabila permission
-         * RECORD_AUDIO belum diberikan.
+         * Service TIDAK dijalankan dari init.
+         *
+         * Service akan dijalankan oleh MainActivity
+         * setelah permission RECORD_AUDIO diberikan.
          */
-        startBackgroundVoiceServiceIfPermitted()
     }
 
     /*
@@ -299,7 +300,6 @@ class JarvisViewModel(
                 when (state) {
 
                     is SpeechState.Idle -> {
-                        // Tidak melakukan apa-apa.
                     }
 
                     is SpeechState.Listening -> {
@@ -404,13 +404,6 @@ class JarvisViewModel(
 
                 vibratePhone()
 
-                /*
-                 * INLINE COMMAND
-                 *
-                 * Contoh:
-                 * "JARVIS buka kamera"
-                 */
-
                 if (
                     !event.inlineCommand
                         .isNullOrBlank()
@@ -429,15 +422,6 @@ class JarvisViewModel(
 
                     return
                 }
-
-                /*
-                 * Hanya wake word:
-                 *
-                 * "JARVIS"
-                 *
-                 * JARVIS menjawab:
-                 * "Ya, Tuan."
-                 */
 
                 _userSpokenText.value =
                     "JARVIS terdeteksi"
@@ -480,8 +464,6 @@ class JarvisViewModel(
             }
 
             is WakeWordEvent.StatusChanged -> {
-                // Status detector tidak digunakan sebagai
-                // status utama UI.
             }
         }
     }
@@ -728,7 +710,6 @@ class JarvisViewModel(
                 )
 
         } catch (e: Exception) {
-            // Service mungkin belum aktif.
         }
     }
 
@@ -742,7 +723,6 @@ class JarvisViewModel(
                 )
 
         } catch (e: Exception) {
-            // Service mungkin belum aktif.
         }
     }
 
@@ -915,7 +895,6 @@ class JarvisViewModel(
             }
 
         } catch (_: Exception) {
-            // Vibration tidak boleh membuat JARVIS crash.
         }
     }
 
@@ -941,4 +920,3 @@ class JarvisViewModel(
 
         super.onCleared()
     }
-}
