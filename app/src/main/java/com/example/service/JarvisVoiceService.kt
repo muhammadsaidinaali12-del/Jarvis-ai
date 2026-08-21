@@ -1570,20 +1570,24 @@ class JarvisVoiceService : Service() {
                     }
 
         val openIntent =
-            PendingIntent.getActivity(
-                this,
-                0,
-                Intent(
-    this,
-    MainActivity::class.java
-).apply {
-
-    this.flags =
-        Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP
-}
-                flags
-            )
+    PendingIntent.getActivity(
+        this,
+        0,
+        Intent(
+            this,
+            MainActivity::class.java
+        ).apply {
+            this.flags =
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP
+        },
+        PendingIntent.FLAG_UPDATE_CURRENT or
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    PendingIntent.FLAG_IMMUTABLE
+                } else {
+                    0
+                }
+    )
 
 
         return NotificationCompat
