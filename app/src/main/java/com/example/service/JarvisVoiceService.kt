@@ -1574,14 +1574,14 @@ class JarvisVoiceService : Service() {
                 this,
                 0,
                 Intent(
-                    this,
-                    MainActivity::class.java
-                ).apply {
+    this,
+    MainActivity::class.java
+).apply {
 
-                    flags =
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                                Intent.FLAG_ACTIVITY_CLEAR_TOP
-                },
+    this.flags =
+        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP
+}
                 flags
             )
 
